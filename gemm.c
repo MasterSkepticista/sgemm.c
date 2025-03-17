@@ -1,12 +1,13 @@
 /**
  * Optimizing SGEMM in C.
- * clang -Ofast -ffast-math -march=native -fopenmp -lgomp gemm.c -o ./gemm.o && ./gemm
+ * ./gemm.py && clang -march=native gemm.c -o ./gemm && ./gemm
  */
+#include <immintrin.h>
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <immintrin.h>
+
 #include "common.h"
 
 #ifdef OMP
@@ -17,9 +18,20 @@ void matmul(const float *left, const float *right, float *out, int rows, int inn
   // #pragma omp parallel for collapse(2) shared(left, right, out)
   for (int y = 0; y < rows; y++) {
     for (int x = 0; x < cols; x++) {
-      for (int k = 0; k < inners; k++) {
-        out[y * cols + x] += left[y * inners + k] * right[x * inners + k];
+      // Compute
+      __m256 tmp = {};
+      for (int k = 0; k < inners; k += 8) {
+        tmp = _mm256_fmadd_ps(
+          _mm256_load_ps(&left[y * inners + k]), 
+          _mm256_load_ps(&right[x * inners + k]), 
+        tmp);
       }
+      // Store
+      float sum = 0;
+      for (int i = 0; i < 8; i++) {
+        sum += ((float *)&tmp)[i];
+      }
+      out[y * cols + x] = sum;
     }
   }
 }
