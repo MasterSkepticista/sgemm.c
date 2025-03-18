@@ -22,24 +22,34 @@
 
 #ifdef FAST
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
-  __m256 *Am = (__m256*)A;
-  __m256 *Bm = (__m256*)B;
-  __m256 *Cm = (__m256*)C;
+  
+  for (int by = 0; by < rows; by += BLOCK_Y) {
+    for (int bx = 0; bx < cols; bx += BLOCK_X) {
+      // Within a single block.
+      __m256 tmp[BLOCK_Y][BLOCK_X] = {};
 
-  for (int y = 0; y < rows; y++) {
-    for (int x = 0; x < cols; x++) {
       // Compute
-      __m256 tmp = {};
-      for (int k = 0; k < inners / 8; k++) {
-        tmp = _mm256_fmadd_ps(Am[y * inners / 8 + k], Bm[x * inners / 8 + k], tmp);
+      for (int k = 0; k < inners; k+=8) {
+        for (int y = 0; y < BLOCK_Y; y++) {
+          for (int x = 0; x < BLOCK_X; x++) {
+            tmp[y][x] = _mm256_fmadd_ps(
+              _mm256_load_ps(&A[(by + y) * inners + k]), 
+              _mm256_load_ps(&B[(bx + x) * inners + k]),
+            tmp[y][x]);
+          }
+        }
       }
 
       // Store
-      float sum = 0.0f;
-      for (int i = 0; i < 8; i++) {
-        sum += ((float*)&tmp)[i];
+      for (int y = 0; y < BLOCK_Y; y++) {
+        for (int x = 0; x < BLOCK_X; x++) {
+          float sum = 0.0f;
+          for (int i = 0; i < 8; i++) {
+            sum += ((float *)&tmp[y][x])[i];
+          }
+          C[(by + y) * cols + (bx + x)] = sum;
+        }
       }
-      C[y * cols + x] = sum;
     }
   }
 }
