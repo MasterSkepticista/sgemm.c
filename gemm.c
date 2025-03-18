@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C.
- * ./gemm.py && clang -march=native gemm.c -o ./gemm && ./gemm
+ * ./gemm.py && clang -O3 -ffast-math -march=native gemm.c -o ./gemm && ./gemm
  */
 #include <immintrin.h>
 #include <math.h>
@@ -14,27 +14,62 @@
 #include <omp.h>
 #endif
 
-void matmul(const float *left, const float *right, float *out, int rows, int inners, int cols) {
-  // #pragma omp parallel for collapse(2) shared(left, right, out)
+#define FAST
+
+#define BLOCK_Y 8
+#define BLOCK_X 2
+// #define BLOCK 8
+
+#ifdef FAST
+void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
+  __m256 *Am = (__m256*)A;
+  __m256 *Bm = (__m256*)B;
+  __m256 *Cm = (__m256*)C;
+
   for (int y = 0; y < rows; y++) {
     for (int x = 0; x < cols; x++) {
       // Compute
       __m256 tmp = {};
-      for (int k = 0; k < inners; k += 8) {
-        tmp = _mm256_fmadd_ps(
-          _mm256_load_ps(&left[y * inners + k]), 
-          _mm256_load_ps(&right[x * inners + k]), 
-        tmp);
+      for (int k = 0; k < inners / 8; k++) {
+        tmp = _mm256_fmadd_ps(Am[y * inners / 8 + k], Bm[x * inners / 8 + k], tmp);
       }
+
       // Store
-      float sum = 0;
+      float sum = 0.0f;
       for (int i = 0; i < 8; i++) {
-        sum += ((float *)&tmp)[i];
+        sum += ((float*)&tmp)[i];
       }
-      out[y * cols + x] = sum;
+      C[y * cols + x] = sum;
     }
   }
 }
+
+#else
+void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
+  for (int by = 0; by < rows; by += BLOCK_Y) {
+    for (int bx = 0; bx < cols; bx += BLOCK_X) {
+      // Within a block.
+      float tmp[BLOCK_Y][BLOCK_X] = {};
+
+      // Compute
+      for (int k = 0; k < inners; k++) {
+        for (int y = 0; y < BLOCK_Y; y++) {
+          for (int x = 0; x < BLOCK_X; x++) {
+            tmp[y][x] += A[(by + y) * inners + k] * B[(bx + x) * inners + k];
+          }
+        }
+      }
+
+      // Store
+      for (int y = 0; y < BLOCK_Y; y++) {
+        for (int x = 0; x < BLOCK_X; x++) {
+          C[(by + y) * cols + (bx + x)] = tmp[y][x];
+        }
+      }
+    }
+  }
+}
+#endif
 
 #ifdef DEBUG
 #define N 4
@@ -65,7 +100,7 @@ int main() {
   memset(val, 0, sizeof(float) * N * N);
 
   // Validate result
-  matmul(A, B, val, N, N, N);
+  gemm(A, B, val, N, N, N);
   allclose(val, C, N * N, 1e-3f);
   printf("Results verified, starting benchmarks...\n");
 
@@ -73,7 +108,7 @@ int main() {
   int repeats = 2;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
-    matmul(A, B, val, N, N, N);
+    gemm(A, B, val, N, N, N);
     double stop = tick();
     double elapsed_time = (stop - start) * 1e-3;
     printf("GFLOP/s: %f\n", (2.0 * N * N * N * 1e-9) / elapsed_time);
