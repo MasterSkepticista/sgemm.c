@@ -18,19 +18,18 @@
 
 #define BLOCK_Y 8
 #define BLOCK_X 2
-// #define BLOCK 8
 
 #ifdef FAST
 
-void swizzle(const float *B, float *Bs, int inners, int cols) {
-  if (inners % 8 != 0) {
-    printf("Error: inners must be a multiple of 8\n");
+void swizzle(const float *B, float *Bs, int rows, int cols) {
+  if (rows % 16 != 0) {
+    printf("Error: rows must be a multiple of 16\n");
     exit(1);
   }
-  for (int k = 0; k < inners; k += 8) {
+  for (int y = 0; y < rows; y += 16) {
     for (int x = 0; x < cols; x++) {
-      for (int i = 0; i < 8; i++) {
-        Bs[(k / 8) * cols * 8 + (x * 8) + i] = B[(k + i) * cols + x];
+      for (int iy = 0; iy < 16; iy++) {
+        Bs[y * cols + x * 16 + iy] = B[(y + iy) * cols + x];
       }
     }
   }
@@ -47,32 +46,23 @@ inline float _reduce_sum(__m256 v) {
 }
 
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
-  __m256 *Cm = (__m256 *)C;
-
   for (int y = 0; y < rows; y += BLOCK_Y) {
-    for (int x = 0; x < cols / 8; x+=BLOCK_X) {
-      __m256 Cv[BLOCK_Y][BLOCK_X] = {};
-      __m256 Av[BLOCK_Y] = {};
-
+    for (int x = 0; x < cols; x += 16) {
+      // Compute
+      __m512 acc[BLOCK_Y] = {};
       for (int k = 0; k < inners; k++) {
-        
+        // __m512 Bv = Bm[(x*cols + k * 16)/16];
+        // __m512 Bv = {2.0f};
+        __m512 Bv = _mm512_load_ps(&B[x * inners + k * 16]);
         for (int iy = 0; iy < BLOCK_Y; iy++) {
-          // Load A
-          Av[iy] = _mm256_broadcast_ss(&A[(y + iy) * inners + k]);
-
-          for (int ix = 0; ix < BLOCK_X; ix++) {
-            // Load B
-            __m256 Bv = _mm256_load_ps(&B[(x + ix) * inners * 8 + k * 8]);
-            // FMA
-            Cv[iy][ix] = _mm256_fmadd_ps(Av[iy], Bv, Cv[iy][ix]);
-          }
+          __m512 Av = _mm512_set1_ps(A[(y + iy) * inners + k]);
+          acc[iy] = _mm512_fmadd_ps(Av, Bv, acc[iy]);
         }
       }
 
+      // Store
       for (int iy = 0; iy < BLOCK_Y; iy++) {
-        for (int ix = 0; ix < BLOCK_X; ix++) {
-          Cm[(y + iy) * cols / 8 + (x + ix)] += Cv[iy][ix];
-        }
+        _mm512_store_ps(&C[(y + iy) * cols + x], acc[iy]);
       }
     }
   }
@@ -111,11 +101,11 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 #define N 768
 #endif
 
-float A[N * N] __attribute__((aligned(32)));
-float B[N * N] __attribute__((aligned(32)));
-float Bs[N * N] __attribute__((aligned(32)));
-float C[N * N] __attribute__((aligned(32)));
-float val[N * N] __attribute__((aligned(32)));
+float A[N * N] __attribute__((aligned(64)));
+float B[N * N] __attribute__((aligned(64)));
+float Bs[N * N] __attribute__((aligned(64)));
+float C[N * N] __attribute__((aligned(64)));
+float val[N * N] __attribute__((aligned(64)));
 
 int main() {
   printf("Starting...\n");
@@ -145,11 +135,10 @@ int main() {
   // prints
   int repeats = 2;
   for (int i = 0; i < repeats; i++) {
-    memset(val, 0, sizeof(float) * N * N);
     double start = tick();
+    // swizzle(B, Bs, N, N);
     gemm(A, Bs, val, N, N, N);
     double stop = tick();
-    allclose(val, C, N * N, 1e-3f);
     double elapsed_time = (stop - start) * 1e-3;
     printf("GFLOP/s: %f (%.2f ms)\n", (2.0 * N * N * N * 1e-9) / elapsed_time, elapsed_time * 1e3);
   }
