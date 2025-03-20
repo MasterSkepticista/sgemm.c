@@ -27,7 +27,7 @@ void swizzle(const float *B, float *Bs, int inners, int cols) {
     printf("Error: inners must be a multiple of 8\n");
     exit(1);
   }
-  for (int k = 0; k < inners; k+=8) {
+  for (int k = 0; k < inners; k += 8) {
     for (int x = 0; x < cols; x++) {
       for (int i = 0; i < 8; i++) {
         Bs[(k / 8) * cols * 8 + (x * 8) + i] = B[(k + i) * cols + x];
@@ -47,17 +47,33 @@ inline float _reduce_sum(__m256 v) {
 }
 
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
-  __m256 *Cm = (__m256*)C;
+  __m256 *Cm = (__m256 *)C;
 
-  for (int y = 0; y < rows; y++) {
-    for (int x = 0; x < cols / 8; x++) {
-      __m256 Cv = {};
+  for (int y = 0; y < rows; y += BLOCK_Y) {
+    for (int x = 0; x < cols / 8; x+=BLOCK_X) {
+      __m256 Cv[BLOCK_Y][BLOCK_X] = {};
+      __m256 Av[BLOCK_Y] = {};
+
       for (int k = 0; k < inners; k++) {
-        __m256 Av = _mm256_broadcast_ss(&A[y * inners + k]);
-        __m256 Bv = _mm256_load_ps(&B[x * inners * 8 + k * 8]);
-        Cv = _mm256_fmadd_ps(Av, Bv, Cv);
+        
+        for (int iy = 0; iy < BLOCK_Y; iy++) {
+          // Load A
+          Av[iy] = _mm256_broadcast_ss(&A[(y + iy) * inners + k]);
+
+          for (int ix = 0; ix < BLOCK_X; ix++) {
+            // Load B
+            __m256 Bv = _mm256_load_ps(&B[(x + ix) * inners * 8 + k * 8]);
+            // FMA
+            Cv[iy][ix] = _mm256_fmadd_ps(Av[iy], Bv, Cv[iy][ix]);
+          }
+        }
       }
-      Cm[y * cols / 8 + x] += Cv;
+
+      for (int iy = 0; iy < BLOCK_Y; iy++) {
+        for (int ix = 0; ix < BLOCK_X; ix++) {
+          Cm[(y + iy) * cols / 8 + (x + ix)] += Cv[iy][ix];
+        }
+      }
     }
   }
 }
