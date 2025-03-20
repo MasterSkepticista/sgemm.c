@@ -22,6 +22,20 @@
 
 #ifdef FAST
 
+void swizzle(const float *B, float *Bs, int inners, int cols) {
+  if (inners % 8 != 0) {
+    printf("Error: inners must be a multiple of 8\n");
+    exit(1);
+  }
+  for (int k = 0; k < inners; k+=8) {
+    for (int x = 0; x < cols; x++) {
+      for (int i = 0; i < 8; i++) {
+        Bs[(k / 8) * cols * 8 + (x * 8) + i] = B[(k + i) * cols + x];
+      }
+    }
+  }
+}
+
 // Reduce 8 floats to a single float.
 inline float _reduce_sum(__m256 v) {
   __m128 lo = _mm256_extractf128_ps(v, 0);
@@ -33,30 +47,17 @@ inline float _reduce_sum(__m256 v) {
 }
 
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
-  
-  for (int by = 0; by < rows; by += BLOCK_Y) {
-    for (int bx = 0; bx < cols; bx += BLOCK_X) {
-      // Within a single block.
-      __m256 tmp[BLOCK_Y][BLOCK_X] = {};
+  __m256 *Cm = (__m256*)C;
 
-      // Compute
-      for (int k = 0; k < inners; k+=8) {
-        for (int y = 0; y < BLOCK_Y; y++) {
-          for (int x = 0; x < BLOCK_X; x++) {
-            tmp[y][x] = _mm256_fmadd_ps(
-              _mm256_load_ps(&A[(by + y) * inners + k]), 
-              _mm256_load_ps(&B[(bx + x) * inners + k]),
-            tmp[y][x]);
-          }
-        }
+  for (int y = 0; y < rows; y++) {
+    for (int x = 0; x < cols / 8; x++) {
+      __m256 Cv = {};
+      for (int k = 0; k < inners; k++) {
+        __m256 Av = _mm256_broadcast_ss(&A[y * inners + k]);
+        __m256 Bv = _mm256_load_ps(&B[x * inners * 8 + k * 8]);
+        Cv = _mm256_fmadd_ps(Av, Bv, Cv);
       }
-
-      // Store
-      for (int y = 0; y < BLOCK_Y; y++) {
-        for (int x = 0; x < BLOCK_X; x++) {
-          C[(by + y) * cols + (bx + x)] = _reduce_sum(tmp[y][x]);
-        }
-      }
+      Cm[y * cols / 8 + x] += Cv;
     }
   }
 }
@@ -96,6 +97,7 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 
 float A[N * N] __attribute__((aligned(32)));
 float B[N * N] __attribute__((aligned(32)));
+float Bs[N * N] __attribute__((aligned(32)));
 float C[N * N] __attribute__((aligned(32)));
 float val[N * N] __attribute__((aligned(32)));
 
@@ -116,19 +118,24 @@ int main() {
   fclose(file);
   memset(val, 0, sizeof(float) * N * N);
 
+  // Swizzle. B(N, N) -> Bs(N/8 * N, 8)
+  swizzle(B, Bs, N, N);
+
   // Validate result
-  gemm(A, B, val, N, N, N);
-  // allclose(val, C, N * N, 1e-3f);
+  gemm(A, Bs, val, N, N, N);
+  allclose(val, C, N * N, 1e-3f);
   printf("Results verified, starting benchmarks...\n");
 
   // prints
   int repeats = 2;
   for (int i = 0; i < repeats; i++) {
+    memset(val, 0, sizeof(float) * N * N);
     double start = tick();
-    gemm(A, B, val, N, N, N);
+    gemm(A, Bs, val, N, N, N);
     double stop = tick();
+    allclose(val, C, N * N, 1e-3f);
     double elapsed_time = (stop - start) * 1e-3;
-    printf("GFLOP/s: %f\n", (2.0 * N * N * N * 1e-9) / elapsed_time);
+    printf("GFLOP/s: %f (%.2f ms)\n", (2.0 * N * N * N * 1e-9) / elapsed_time, elapsed_time * 1e3);
   }
 
 #ifdef DEBUG
