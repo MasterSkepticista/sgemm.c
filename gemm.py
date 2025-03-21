@@ -11,15 +11,13 @@ B = np.random.randn(N, N).astype(np.float32)
 C = A @ B
 
 with open("/tmp/matmul", "wb") as f:
-  f.write(A.tobytes())
-  f.write(B.T.tobytes())
-  f.write(C.tobytes())
-
-flop = N * N * 2 * N
+  f.write(A.data)
+  f.write(B.data)
+  f.write(C.data)
 
 for i in range(2):
   t0 = time.monotonic()
   C = A @ B
   dt = (time.monotonic() - t0) * 1e9
 
-  print("GFLOPS:", flop / dt)
+  print("GFLOPS:", (N * N * 2.0 * N) / dt)

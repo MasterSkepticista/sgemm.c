@@ -35,16 +35,6 @@ void swizzle(const float *B, float *Bs, int rows, int cols) {
   }
 }
 
-// Reduce 8 floats to a single float.
-inline float _reduce_sum(__m256 v) {
-  __m128 lo = _mm256_extractf128_ps(v, 0);
-  __m128 hi = _mm256_extractf128_ps(v, 1);
-  lo = _mm_add_ps(lo, hi);
-  lo = _mm_hadd_ps(lo, lo);
-  lo = _mm_hadd_ps(lo, lo);
-  return lo[0];
-}
-
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
   for (int y = 0; y < rows; y += BLOCK_Y) {
     for (int x = 0; x < cols; x += 16) {
@@ -95,11 +85,7 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 }
 #endif
 
-#ifdef DEBUG
-#define N 4
-#else
 #define N 768
-#endif
 
 float A[N * N] __attribute__((aligned(64)));
 float B[N * N] __attribute__((aligned(64)));
@@ -124,31 +110,18 @@ int main() {
   fclose(file);
   memset(val, 0, sizeof(float) * N * N);
 
-  // Swizzle. B(N, N) -> Bs(N/8 * N, 8)
-  swizzle(B, Bs, N, N);
-
-  // Validate result
-  gemm(A, Bs, val, N, N, N);
-  allclose(val, C, N * N, 1e-3f);
-  printf("Results verified, starting benchmarks...\n");
-
-  // prints
+  // Benchmark
   int repeats = 2;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
-    // swizzle(B, Bs, N, N);
-    gemm(A, Bs, val, N, N, N);
+    gemm(A, B, val, N, N, N);
     double stop = tick();
     double elapsed_time = (stop - start) * 1e-3;
     printf("GFLOP/s: %f (%.2f ms)\n", (2.0 * N * N * N * 1e-9) / elapsed_time, elapsed_time * 1e3);
   }
-
-#ifdef DEBUG
-  print_matrix(A, N, N);
-  print_matrix(B, N, N);
-  print_matrix(C, N, N);
-  print_matrix(val, N, N);
-#endif
-
+  
+  allclose(val, C, N * N, 1e-3f);
+  printf("Match.\n");
+  
   return 0;
 }
