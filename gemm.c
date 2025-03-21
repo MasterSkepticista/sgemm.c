@@ -16,7 +16,7 @@
 
 #define FAST
 
-#define BLOCK_Y 16
+#define BLOCK_Y 8
 #define BLOCK_X 2
 
 #define WIDTH 16
@@ -38,9 +38,8 @@ void swizzle(const float *B, float *Bs, int inners, int cols) {
 }
 
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
-  #pragma omp parallel for shared(A, B, C)
-  for (int y = 0; y < rows; y += BLOCK_Y) {
-    for (int x = 0; x < cols; x += WIDTH * BLOCK_X) {
+  for (int x = 0; x < cols; x += WIDTH * BLOCK_X) {
+    for (int y = 0; y < rows; y += BLOCK_Y) {
       // Compute
       __m512 acc[BLOCK_Y][BLOCK_X] = {};
       for (int k = 0; k < inners; k++) {
@@ -90,7 +89,7 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 }
 #endif
 
-#define N 2048
+#define N 4096
 
 float A[N * N] __attribute__((aligned(64)));
 float B[N * N] __attribute__((aligned(64)));
@@ -117,11 +116,11 @@ int main() {
   memset(val, 0, sizeof(float) * N * N);
 
   // Benchmark
-  int repeats = 400;
+  int repeats = 20;
   for (int i = 0; i < repeats; i++) {
     memset(val, 0, sizeof(float) * N * N);
-    double start = tick();
     swizzle(B, Bs, N, N);
+    double start = tick();
     gemm(A, Bs, val, N, N, N);
     double stop = tick();
     double elapsed_time = (stop - start) * 1e-3;
