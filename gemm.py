@@ -4,7 +4,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import time
 import numpy as np
 
-N = 768
+N = 2048
 np.random.seed(42)
 A = np.random.randn(N, N).astype(np.float32)
 B = np.random.randn(N, N).astype(np.float32)

@@ -16,43 +16,48 @@
 
 #define FAST
 
-#define BLOCK_Y 8
+#define BLOCK_Y 16
 #define BLOCK_X 2
+
+#define WIDTH 16
 
 #ifdef FAST
 
-void swizzle(const float *B, float *Bs, int rows, int cols) {
-  if (rows % 16 != 0) {
-    printf("Error: rows must be a multiple of 16\n");
+void swizzle(const float *B, float *Bs, int inners, int cols) {
+  if (cols % WIDTH != 0) {
+    printf("Error: cols must be a multiple of WIDTH\n");
     exit(1);
   }
-  for (int y = 0; y < rows; y += 16) {
-    for (int x = 0; x < cols; x++) {
-      for (int iy = 0; iy < 16; iy++) {
-        Bs[y * cols + x * 16 + iy] = B[(y + iy) * cols + x];
+  for (int x = 0; x < cols; x += WIDTH) {
+    for (int k = 0; k < inners; k++) {
+      for (int ix = 0; ix < WIDTH; ix++) {
+        Bs[(x / WIDTH) * (inners * WIDTH) + (k * WIDTH) + ix] = B[k * cols + (x + ix)];
       }
     }
   }
 }
 
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
+  #pragma omp parallel for shared(A, B, C)
   for (int y = 0; y < rows; y += BLOCK_Y) {
-    for (int x = 0; x < cols; x += 16) {
+    for (int x = 0; x < cols; x += WIDTH * BLOCK_X) {
       // Compute
-      __m512 acc[BLOCK_Y] = {};
+      __m512 acc[BLOCK_Y][BLOCK_X] = {};
       for (int k = 0; k < inners; k++) {
-        // __m512 Bv = Bm[(x*cols + k * 16)/16];
-        // __m512 Bv = {2.0f};
-        __m512 Bv = _mm512_load_ps(&B[x * inners + k * 16]);
         for (int iy = 0; iy < BLOCK_Y; iy++) {
           __m512 Av = _mm512_set1_ps(A[(y + iy) * inners + k]);
-          acc[iy] = _mm512_fmadd_ps(Av, Bv, acc[iy]);
+          for (int ix = 0; ix < BLOCK_X; ix++) {
+            __m512 Bv = _mm512_load_ps(&B[((x + ix*WIDTH) / WIDTH) * (inners * WIDTH) + k * WIDTH]);
+            acc[iy][ix] = _mm512_fmadd_ps(Av, Bv, acc[iy][ix]);
+          }
         }
       }
 
       // Store
       for (int iy = 0; iy < BLOCK_Y; iy++) {
-        _mm512_store_ps(&C[(y + iy) * cols + x], acc[iy]);
+        for (int ix = 0; ix < BLOCK_X; ix++) {
+          _mm512_store_ps(&C[(y + iy) * cols + (x + ix * WIDTH)], acc[iy][ix]);
+        }
       }
     }
   }
@@ -85,7 +90,7 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 }
 #endif
 
-#define N 768
+#define N 2048
 
 float A[N * N] __attribute__((aligned(64)));
 float B[N * N] __attribute__((aligned(64)));
@@ -108,20 +113,25 @@ int main() {
   fread(B, 1, sizeof(float) * N * N, file);
   fread(C, 1, sizeof(float) * N * N, file);
   fclose(file);
+
   memset(val, 0, sizeof(float) * N * N);
 
   // Benchmark
-  int repeats = 2;
+  int repeats = 400;
   for (int i = 0; i < repeats; i++) {
+    memset(val, 0, sizeof(float) * N * N);
     double start = tick();
-    gemm(A, B, val, N, N, N);
+    swizzle(B, Bs, N, N);
+    gemm(A, Bs, val, N, N, N);
     double stop = tick();
     double elapsed_time = (stop - start) * 1e-3;
     printf("GFLOP/s: %f (%.2f ms)\n", (2.0 * N * N * N * 1e-9) / elapsed_time, elapsed_time * 1e3);
   }
-  
+
+  // print_matrix(C, N, N);
+  // print_matrix(val, N, N);
   allclose(val, C, N * N, 1e-3f);
   printf("Match.\n");
-  
+
   return 0;
 }
