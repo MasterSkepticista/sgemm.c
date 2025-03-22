@@ -23,11 +23,13 @@
 
 #ifdef FAST
 
-void swizzle(const float *B, float *Bs, int inners, int cols) {
+float *swizzle(const float *B, int inners, int cols) {
+  float *Bs = (float*)malloc(sizeof(float) * inners * cols);
   if (cols % WIDTH != 0) {
     printf("Error: cols must be a multiple of WIDTH\n");
     exit(1);
   }
+  #pragma omp parallel for shared(B)
   for (int x = 0; x < cols; x += WIDTH) {
     for (int k = 0; k < inners; k++) {
       for (int ix = 0; ix < WIDTH; ix++) {
@@ -35,9 +37,11 @@ void swizzle(const float *B, float *Bs, int inners, int cols) {
       }
     }
   }
+  return Bs;
 }
 
 void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
+  #pragma omp parallel for shared(A, B, C)
   for (int x = 0; x < cols; x += WIDTH * BLOCK_X) {
     for (int y = 0; y < rows; y += BLOCK_Y) {
       // Compute
@@ -93,12 +97,11 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 
 float A[N * N] __attribute__((aligned(64)));
 float B[N * N] __attribute__((aligned(64)));
-float Bs[N * N] __attribute__((aligned(64)));
 float C[N * N] __attribute__((aligned(64)));
 float val[N * N] __attribute__((aligned(64)));
 
 int main() {
-  printf("Starting...\n");
+  printf("Problem size [%d x %d]\n", N, N);
   /**
    * Xeon 6258R
    * 2 AVX-512 FMA units
@@ -116,15 +119,13 @@ int main() {
   memset(val, 0, sizeof(float) * N * N);
 
   // Benchmark
-  int repeats = 20;
+  int repeats = 400;
   for (int i = 0; i < repeats; i++) {
-    memset(val, 0, sizeof(float) * N * N);
-    swizzle(B, Bs, N, N);
     double start = tick();
-    gemm(A, Bs, val, N, N, N);
+    gemm(A, swizzle(B, N, N), val, N, N, N);
     double stop = tick();
     double elapsed_time = (stop - start) * 1e-3;
-    printf("GFLOP/s: %f (%.2f ms)\n", (2.0 * N * N * N * 1e-9) / elapsed_time, elapsed_time * 1e3);
+    printf("GFLOP/s: %.2f (%.2f ms)\n", (2.0 * N * N * N * 1e-9) / elapsed_time, elapsed_time * 1e3);
   }
 
   // print_matrix(C, N, N);
