@@ -97,11 +97,6 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 
 #define N 4096
 
-float A[N * N] __attribute__((aligned(64)));
-float B[N * N] __attribute__((aligned(64)));
-float C[N * N] __attribute__((aligned(64)));
-float val[N * N] __attribute__((aligned(64)));
-
 int main() {
   printf("Problem size [%d x %d]\n", N, N);
   /**

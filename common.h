@@ -3,13 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
+#include <stdint.h>
 
 #define MIN(a, b) ((a) < (b) ? (a) : (b))
 
-double tick() {
+uint64_t tick() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return ts.tv_sec * 1000.0 + ts.tv_nsec / 1e6;
+  return (uint64_t)((ts.tv_sec + ts.tv_nsec / 1e9) * 1e3);
 }
 
 void print_matrix(float *m, int rows, int cols) {
