@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C.
- * ./gemm.py && clang -O3 -ffast-math -march=native gemm.c -o ./gemm && ./gemm
+ * ./gemm.py && clang -O3 -march=native gemm.c -o ./gemm && ./gemm
  */
 #include <immintrin.h>
 #include <math.h>
@@ -14,25 +14,28 @@
 #include <omp.h>
 #endif
 
-#define FAST
+#define N 4096
+
+#ifdef FAST
 
 #define BLOCK_Y 8
 #define BLOCK_X 2
 #define WIDTH 16
 
 float *swizzle(const float *B, int inners, int cols) {
-  if (cols % WIDTH != 0) {
-    printf("Error: cols must be a multiple of WIDTH\n");
+  if (cols % (WIDTH) != 0) {
+    printf("Error: cols must be a multiple of WIDTH * BLOCK_X\n");
     exit(1);
   }
   float *Bs = (float *)aligned_alloc(64, sizeof(float) * inners * cols);
 #ifdef OMP
-#pragma omp parallel for shared(B)
+#pragma omp parallel for shared(B, Bs)
 #endif
-  for (int x = 0; x < cols; x += WIDTH) {
+  for (int x = 0; x < cols; x += WIDTH * BLOCK_X) {
     for (int k = 0; k < inners; k++) {
-      for (int ix = 0; ix < WIDTH; ix++) {
-        Bs[(x / WIDTH) * (inners * WIDTH) + (k * WIDTH) + ix] = B[k * cols + (x + ix)];
+      for (int ix = 0; ix < WIDTH * BLOCK_X; ix++) {
+        Bs[(x / (WIDTH * BLOCK_X)) * (inners * WIDTH * BLOCK_X) + (k * WIDTH * BLOCK_X) + ix] =
+            B[k * cols + (x + ix)];
       }
     }
   }
@@ -52,7 +55,7 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
         for (int iy = 0; iy < BLOCK_Y; iy++) {
           __m512 Av = _mm512_set1_ps(A[(y + iy) * inners + k]);
           for (int ix = 0; ix < BLOCK_X; ix++) {
-            __m512 Bv = _mm512_load_ps(&Bs[((x + ix * WIDTH) / WIDTH) * (inners * WIDTH) + k * WIDTH]);
+            __m512 Bv = _mm512_load_ps(&B[(x / (WIDTH * BLOCK_X)) * (inners * WIDTH * BLOCK_X) + k * WIDTH * BLOCK_X + ix * WIDTH]);
             acc[iy][ix] = _mm512_fmadd_ps(Av, Bv, acc[iy][ix]);
           }
         }
@@ -69,33 +72,8 @@ void gemm(const float *A, const float *B, float *C, int rows, int inners, int co
 }
 
 #else
-void gemm(const float *A, const float *B, float *C, int rows, int inners, int cols) {
-  for (int by = 0; by < rows; by += BLOCK_Y) {
-    for (int bx = 0; bx < cols; bx += BLOCK_X) {
-      // Within a block.
-      float tmp[BLOCK_Y][BLOCK_X] = {};
 
-      // Compute
-      for (int k = 0; k < inners; k++) {
-        for (int y = 0; y < BLOCK_Y; y++) {
-          for (int x = 0; x < BLOCK_X; x++) {
-            tmp[y][x] += A[(by + y) * inners + k] * B[(bx + x) * inners + k];
-          }
-        }
-      }
-
-      // Store
-      for (int y = 0; y < BLOCK_Y; y++) {
-        for (int x = 0; x < BLOCK_X; x++) {
-          C[(by + y) * cols + (bx + x)] = tmp[y][x];
-        }
-      }
-    }
-  }
-}
 #endif
-
-#define N 4096
 
 int main() {
   printf("Problem size [%d x %d]\n", N, N);
