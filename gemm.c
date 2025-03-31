@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C.
- * ./gemm.py && clang -O3 -march=native gemm.c -o ./gemm && ./gemm
+ * gcc -O3 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
 #include <math.h>
@@ -24,6 +24,21 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   }
 }
 
+#define BLOCK_K 32
+
+void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
+  constant_init(C, M * N, 0.0f);
+  for (int k = 0; k < K; k += BLOCK_K) {
+    for (int i = 0; i < M; i++) {
+      for (int ik = 0; ik < BLOCK_K; ik++) {
+        for (int j = 0; j < N; j++) {
+          C[i * N + j] += A[i * K + k + ik] * B[(k + ik) * N + j];
+        }
+      }
+    }
+  }
+}
+
 int main(int argc, char **argv) {
   /**
    * Xeon 6258R
@@ -31,7 +46,7 @@ int main(int argc, char **argv) {
    * = 2 * 16 * 2 = 64 FLOP/cycle
    * = 2.7 * 64 = 172.8 GFLOP/s at 2.7GHz
    */
-  
+
   // initialize
   int M, N, K;
 #ifdef DEBUG
@@ -59,6 +74,7 @@ int main(int argc, char **argv) {
 
   // Ground truth.
   gemm_naive(A, B, C, M, N, K);
+  printf("Naive SGEMM done.\n");
 
 #ifdef DEBUG
   print_matrix(A, M, K);
@@ -71,7 +87,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < repeats; i++) {
     constant_init(val, M * N, 0.0f);
     double start = tick();
-    gemm_naive(A, B, val, M, N, K);
+    gemm(A, B, val, M, N, K);
     double stop = tick();
     double elapsed_time = (stop - start);
     printf("-> GFLOP/s: %.2f (%.2f ms)\n", (2.0 * K * M * N * 1e-6f) / elapsed_time, elapsed_time);
