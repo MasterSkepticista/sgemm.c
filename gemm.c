@@ -16,8 +16,8 @@
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
   for (int i = 0; i < M; i++) {
-    for (int j = 0; j < N; j++) {
-      for (int k = 0; k < K; k++) {
+    for (int k = 0; k < K; k++) {
+      for (int j = 0; j < N; j++) {
         C[i * N + j] += A[i * K + k] * B[k * N + j];
       }
     }
@@ -37,7 +37,13 @@ int main(int argc, char **argv) {
 #ifdef DEBUG
   M = N = K = 4;
 #else
-  M = N = K = 512;
+  if (argc > 1) {
+    int size = atoi(argv[1]);
+    M = N = K = size;
+  } else {
+    printf("Usage: %s <size>\n", argv[0]);
+    exit(EXIT_FAILURE);
+  }
 #endif
 
   printf("Problem size M=%d, K=%d, N=%d\n", M, K, N);
@@ -63,11 +69,12 @@ int main(int argc, char **argv) {
   // Benchmark
   int repeats = 4;
   for (int i = 0; i < repeats; i++) {
-    uint64_t start = tick();
+    constant_init(val, M * N, 0.0f);
+    double start = tick();
     gemm_naive(A, B, val, M, N, K);
-    uint64_t stop = tick();
-    uint64_t elapsed_time = (stop - start);
-    printf("GFLOP/s: %.2f (%zu ms)\n", (2.0 * K * M * N * 1e-6) / elapsed_time, elapsed_time);
+    double stop = tick();
+    double elapsed_time = (stop - start);
+    printf("-> GFLOP/s: %.2f (%.2f ms)\n", (2.0 * K * M * N * 1e-6f) / elapsed_time, elapsed_time);
   }
 
   allclose(val, C, N * N, 1e-3f);
