@@ -24,15 +24,28 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   }
 }
 
+#define BLOCK_Y 256
+#define BLOCK_X 128
 #define BLOCK_K 32
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
-  for (int k = 0; k < K; k += BLOCK_K) {
-    for (int i = 0; i < M; i++) {
-      for (int ik = 0; ik < BLOCK_K; ik++) {
-        for (int j = 0; j < N; j++) {
-          C[i * N + j] += A[i * K + k + ik] * B[(k + ik) * N + j];
+  for (int i = 0; i < M; i += BLOCK_Y) {
+    for (int j = 0; j < N; j += BLOCK_X) {
+      float acc[BLOCK_Y][BLOCK_X] = {};
+      for (int k = 0; k < K; k += BLOCK_K) {
+        for (int iy = 0; iy < BLOCK_Y; iy++) {
+          for (int ik = 0; ik < BLOCK_K; ik++) {
+            for (int jx = 0; jx < BLOCK_X; jx++) {
+              acc[iy][jx] += A[(i + iy) * K + (k + ik)] * B[(k + ik) * N + (j + jx)];
+            }
+          }
+        }
+      }
+
+      for (int iy = 0; iy < BLOCK_Y; iy++) {
+        for (int jx = 0; jx < BLOCK_X; jx++) {
+          C[(i + iy) * N + (j + jx)] += acc[iy][jx];
         }
       }
     }
