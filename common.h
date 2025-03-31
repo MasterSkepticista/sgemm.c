@@ -33,3 +33,15 @@ void allclose(float *a, float *b, int numel, float rtol) {
     }
   }
 }
+
+void rand_init(float *m, int numel) {
+  for (int i = 0; i < numel; i++) {
+    m[i] = (float)rand() / RAND_MAX;
+  }
+}
+
+void constant_init(float *m, int numel, float val) {
+  for (int i = 0; i < numel; i++) {
+    m[i] = val;
+  }
+}
