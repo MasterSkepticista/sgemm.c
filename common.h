@@ -5,7 +5,7 @@
 #include <math.h>
 #include <stdint.h>
 
-#define MIN(a, b) ((a) < (b) ? (a) : (b))
+#define min(a, b) ((a) < (b) ? (a) : (b))
 
 double tick() {
   struct timespec ts;
@@ -36,7 +36,7 @@ void allclose(float *a, float *b, int numel, float rtol) {
 
 void rand_init(float *m, int numel) {
   for (int i = 0; i < numel; i++) {
-    m[i] = rand() / RAND_MAX;
+    m[i] = (float)rand() / (float)RAND_MAX;
   }
 }
 
