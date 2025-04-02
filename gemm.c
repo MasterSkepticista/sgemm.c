@@ -55,6 +55,15 @@ void kernel_16x6(float *blockA_packed, float *blockB_packed, float *C, int m, in
                                  bit_mask << (m + 11), bit_mask << (m + 10), bit_mask << (m + 9), bit_mask << (m + 8));
     masks[1] = _mm256_setr_epi32(bit_mask << (m + 7), bit_mask << (m + 6), bit_mask << (m + 5), bit_mask << (m + 4),
                                  bit_mask << (m + 3), bit_mask << (m + 2), bit_mask << (m + 1), bit_mask << (m));
+    for (int j = 0; j < n; j++) {
+      C_buffer[0][j] = _mm256_maskload_ps(&C[j * M], masks[0]);
+      C_buffer[1][j] = _mm256_maskload_ps(&C[j * M + 8], masks[1]);
+    }
+  } else {
+    for (int j = 0; j < n; j++) {
+      C_buffer[0][j] = _mm256_load_ps(&C[j * M]);
+      C_buffer[1][j] = _mm256_load_ps(&C[j * M + 8]);
+    }
   }
   // Compute
   for (int k = 0; k < K; k++) {
