@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C.
- * gcc-13 -O3 -march=native gemm.c -o ./gemm && ./gemm 1024
+ * clang-18 -O2 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
 #include <math.h>
@@ -30,7 +30,7 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 void pack_blockA(const float *A, float *blockA_packed, int m, int M, int K) {
   for (int k = 0; k < K; k++) {
     for (int i = 0; i < MR; i++) {
-      blockA_packed[k * MR + i] = (i < m) ? A[k * M + i] : 0.0f;
+      *blockA_packed++ = (i < m) ? A[k * M + i] : 0.0f;
     }
   }
 }
@@ -38,7 +38,7 @@ void pack_blockA(const float *A, float *blockA_packed, int m, int M, int K) {
 void pack_blockB(const float *B, float *blockB_packed, int n, int N, int K) {
   for (int k = 0; k < K; k++) {
     for (int j = 0; j < NR; j++) {
-      blockB_packed[k * NR + j] = (j < n) ? B[j * K + k] : 0.0f;
+      *blockB_packed++ = (j < n) ? B[j * K + k] : 0.0f;
     }
   }
 }
