@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C.
- * gcc -O3 -march=native gemm.c -o ./gemm && ./gemm 1024
+ * gcc-13 -O3 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
 #include <math.h>
@@ -27,34 +27,24 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 16
 #define NR 6
 
-void pack_blockA(float *A, float *blockA_packed, int m, int M, int K) {
+void pack_blockA(const float *A, float *blockA_packed, int m, int M, int K) {
   for (int k = 0; k < K; k++) {
-    for (int i = 0; i < m; i++) {
-      *blockA_packed = A[k * M + i];
-      blockA_packed++;
-    }
-    for (int i = m; i < MR; i++) {
-      *blockA_packed = 0.0f;
-      blockA_packed++;
+    for (int i = 0; i < MR; i++) {
+      blockA_packed[k * MR + i] = (i < m) ? A[k * M + i] : 0.0f;
     }
   }
 }
 
-void pack_blockB(float *B, float *blockB_packed, int n, int N, int K) {
+void pack_blockB(const float *B, float *blockB_packed, int n, int N, int K) {
   for (int k = 0; k < K; k++) {
-    for (int j = 0; j < n; j++) {
-      *blockB_packed = B[j * K + k];
-      blockB_packed++;
-    }
-    for (int j = n; j < NR; j++) {
-      *blockB_packed = 0.0f;
-      blockB_packed++;
+    for (int j = 0; j < NR; j++) {
+      blockB_packed[k * NR + j] = (j < n) ? B[j * K + k] : 0.0f;
     }
   }
 }
 
 void kernel_16x6(float *blockA_packed, float *blockB_packed, float *C, int m, int n, int M, int N, int K) {
-  __m256 C_buffer[MR/8][NR] = {};
+  __m256 C_buffer[MR / 8][NR] = {};
   __m256 a0_packed;
   __m256 a1_packed;
   __m256 b_packed;
@@ -88,15 +78,15 @@ void kernel_16x6(float *blockA_packed, float *blockB_packed, float *C, int m, in
     }
   } else {
     for (int j = 0; j < n; j++) {
-      _mm256_store_ps(&C[j * M], C_buffer[0][j]);
-      _mm256_store_ps(&C[j * M + 8], C_buffer[1][j]);
+      _mm256_storeu_ps(&C[j * M], C_buffer[0][j]);
+      _mm256_storeu_ps(&C[j * M + 8], C_buffer[1][j]);
     }
   }
 }
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  float *blockA_packed = (float *)aligned_alloc(64, sizeof(float) * MR * K);
-  float *blockB_packed = (float *)aligned_alloc(64, sizeof(float) * K * NR);
+  float *blockA_packed = (float *)_mm_malloc(sizeof(float) * MR * K, 64);
+  float *blockB_packed = (float *)_mm_malloc(sizeof(float) * K * NR, 64);
 
   for (int i = 0; i < M; i += MR) {
     int m = min(MR, M - i);
@@ -132,10 +122,10 @@ int main(int argc, char **argv) {
 #endif
 
   printf("Problem size M=%d, K=%d, N=%d\n", M, K, N);
-  float *A = (float *)aligned_alloc(64, sizeof(float) * M * K);
-  float *B = (float *)aligned_alloc(64, sizeof(float) * K * N);
-  float *C = (float *)aligned_alloc(64, sizeof(float) * M * N);
-  float *val = (float *)aligned_alloc(64, sizeof(float) * M * N);
+  float *A = (float *)_mm_malloc(sizeof(float) * M * K, 64);
+  float *B = (float *)_mm_malloc(sizeof(float) * K * N, 64);
+  float *C = (float *)_mm_malloc(sizeof(float) * M * N, 64);
+  float *val = (float *)_mm_malloc(sizeof(float) * M * N, 64);
 
   rand_init(A, M * K);
   rand_init(B, K * N);
@@ -166,5 +156,9 @@ int main(int argc, char **argv) {
   allclose(val, C, N * N, 1e-3f);
   printf("Match.\n");
 
+  _mm_free(A);
+  _mm_free(B);
+  _mm_free(C);
+  _mm_free(val);
   return 0;
 }
