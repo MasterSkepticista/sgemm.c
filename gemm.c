@@ -15,6 +15,7 @@
  */
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
+  #pragma omp parallel for collapse(2)
   for (int j = 0; j < N; j++) {
     for (int k = 0; k < K; k++) {
       for (int i = 0; i < M; i++) {
@@ -27,83 +28,41 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 16
 #define NR 6
 
-void pack_blockA(const float *A, float *blockA_packed, int m, int M, int K) {
-  for (int k = 0; k < K; k++) {
-    for (int i = 0; i < MR; i++) {
-      *blockA_packed++ = (i < m) ? A[k * M + i] : 0.0f;
-    }
+void kernel_16x6(const float *A, const float *B, float *C, int M, int K) {
+  __m256 C_buffer[6][2];
+  __m256 a0_vec, a1_vec;
+  __m256 b_vec;
+  // Load
+  for (int j = 0; j < 6; j++) {
+    C_buffer[j][0] = _mm256_load_ps(&C[j * M]);
+    C_buffer[j][1] = _mm256_load_ps(&C[j * M + 8]);
   }
-}
 
-void pack_blockB(const float *B, float *blockB_packed, int n, int N, int K) {
-  for (int k = 0; k < K; k++) {
-    for (int j = 0; j < NR; j++) {
-      *blockB_packed++ = (j < n) ? B[j * K + k] : 0.0f;
-    }
-  }
-}
-
-void kernel_16x6(float *blockA_packed, float *blockB_packed, float *C, int m, int n, int M, int N, int K) {
-  __m256 C_buffer[MR / 8][NR] = {};
-  __m256 a0_packed;
-  __m256 a1_packed;
-  __m256 b_packed;
-  __m256i masks[2];
-  if (m != MR) {
-    const unsigned int bit_mask = 65535;
-    masks[0] = _mm256_setr_epi32(bit_mask << (m + 15), bit_mask << (m + 14), bit_mask << (m + 13), bit_mask << (m + 12),
-                                 bit_mask << (m + 11), bit_mask << (m + 10), bit_mask << (m + 9), bit_mask << (m + 8));
-    masks[1] = _mm256_setr_epi32(bit_mask << (m + 7), bit_mask << (m + 6), bit_mask << (m + 5), bit_mask << (m + 4),
-                                 bit_mask << (m + 3), bit_mask << (m + 2), bit_mask << (m + 1), bit_mask << (m));
-    for (int j = 0; j < n; j++) {
-      C_buffer[0][j] = _mm256_maskload_ps(&C[j * M], masks[0]);
-      C_buffer[1][j] = _mm256_maskload_ps(&C[j * M + 8], masks[1]);
-    }
-  } else {
-    for (int j = 0; j < n; j++) {
-      C_buffer[0][j] = _mm256_load_ps(&C[j * M]);
-      C_buffer[1][j] = _mm256_load_ps(&C[j * M + 8]);
-    }
-  }
   // Compute
-  for (int k = 0; k < K; k++) {
-    a0_packed = _mm256_load_ps(blockA_packed);
-    a1_packed = _mm256_load_ps(blockA_packed + 8);
-    for (int j = 0; j < NR; j++) {
-      b_packed = _mm256_set1_ps(blockB_packed[j]);
-      C_buffer[0][j] = _mm256_fmadd_ps(a0_packed, b_packed, C_buffer[0][j]);
-      C_buffer[1][j] = _mm256_fmadd_ps(a1_packed, b_packed, C_buffer[1][j]);
+  for (int p = 0; p < K; p++) {
+    a0_vec = _mm256_load_ps(&A[p * M]);
+    a1_vec = _mm256_load_ps(&A[p * M + 8]);
+    for (int j = 0; j < 6; j++) {
+      b_vec = _mm256_broadcast_ss(&B[j * K + p]);
+      C_buffer[j][0] = _mm256_fmadd_ps(a0_vec, b_vec, C_buffer[j][0]);
+      C_buffer[j][1] = _mm256_fmadd_ps(a1_vec, b_vec, C_buffer[j][1]);
     }
-
-    blockA_packed += MR;
-    blockB_packed += NR;
   }
 
   // Store
-  if (m != MR) {
-    for (int j = 0; j < n; j++) {
-      _mm256_maskstore_ps(&C[j * M], masks[0], C_buffer[0][j]);
-      _mm256_maskstore_ps(&C[j * M + 8], masks[1], C_buffer[1][j]);
-    }
-  } else {
-    for (int j = 0; j < n; j++) {
-      _mm256_storeu_ps(&C[j * M], C_buffer[0][j]);
-      _mm256_storeu_ps(&C[j * M + 8], C_buffer[1][j]);
-    }
+  for (int j = 0; j < 6; j++) {
+    _mm256_store_ps(&C[j * M], C_buffer[j][0]);
+    _mm256_store_ps(&C[j * M + 8], C_buffer[j][1]);
   }
 }
 
+/**
+ * AVX2 implementation using 16x6 micro-kernel.
+ */
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  float *blockA_packed = (float *)_mm_malloc(sizeof(float) * MR * K, 64);
-  float *blockB_packed = (float *)_mm_malloc(sizeof(float) * K * NR, 64);
-
-  for (int i = 0; i < M; i += MR) {
-    int m = min(MR, M - i);
-    pack_blockA(&A[i], blockA_packed, m, M, K);
-    for (int j = 0; j < N; j += NR) {
-      int n = min(NR, N - j);
-      pack_blockB(&B[j * K], blockB_packed, n, N, K);
-      kernel_16x6(blockA_packed, blockB_packed, &C[j * M + i], m, n, M, N, K);
+  for (int j = 0; j < N; j+=NR) {
+    for (int i = 0; i < M; i+=MR) {
+      kernel_16x6(&A[i], &B[j * K], &C[j * M + i], M, K);
     }
   }
 }
