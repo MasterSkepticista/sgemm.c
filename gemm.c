@@ -10,12 +10,14 @@
 
 #include "common.h"
 
+#define MEM_ALIGN 64
+
 /**
  * Naive implementation of SGEMM that will act as ground truth.
  */
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
-#pragma omp parallel for collapse(2)
+#pragma omp parallel for
   for (int j = 0; j < N; j++) {
     for (int k = 0; k < K; k++) {
       for (int i = 0; i < M; i++) {
@@ -28,7 +30,29 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 16
 #define NR 6
 
-void kernel_16x6(const float *A, const float *B, float *C, int m, int n, int M, int K) {
+/**
+ * Copies elements column-wise from A up to m. Pads m->MR with zeros.
+ */
+void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K) {
+  for (int p = 0; p < K; p++) {
+    for (int i = 0; i < MR; i++) {
+      *padded_blockA++ = (i < m) ? A[p * M + i] : 0.0f;
+    }
+  }
+}
+
+/**
+ * Copies elements row-wise from B up to n. Pads n->NR with zeros.
+ */
+void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K) {
+  for (int p = 0; p < K; p++) {
+    for (int j = 0; j < NR; j++) {
+      *padded_blockB++ = (j < n) ? B[j * K + p] : 0.0f;
+    }
+  }
+}
+
+void kernel_16x6(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int K) {
   __m256 C_buffer[NR][MR / 8];
   __m256 a0_vec, a1_vec;
   __m256 b_vec;
@@ -40,7 +64,7 @@ void kernel_16x6(const float *A, const float *B, float *C, int m, int n, int M, 
      * Conditional load/store masks.
      * When rows of A or C are not multiples of MR, edge blocks may have <MR rows.
      * Lets assume m=9. In this case, we do not want to load more than 9 column elements
-     * from A (or store more than 9 column elements to C). 
+     * from A (or store more than 9 column elements to C).
      * We need a mask that says (1=yes) and (0=no) for each position in range(0, MR)
      * For this, we create two 8-size masks of 32-bit unsigned integers where MSB
      * dictates whether or not an element is to be loaded.
@@ -55,7 +79,7 @@ void kernel_16x6(const float *A, const float *B, float *C, int m, int n, int M, 
     mask[0] = _mm256_slli_epi32(cmp0, 31);
     __m256i cmp1 = _mm256_cmpgt_epi32(_mm256_set1_epi32(m), _mm256_setr_epi32(8, 9, 10, 11, 12, 13, 14, 15));
     mask[1] = _mm256_slli_epi32(cmp1, 31);
-    
+
     for (int j = 0; j < n; j++) {
       C_buffer[j][0] = _mm256_maskload_ps(&C[j * M], mask[0]);
       C_buffer[j][1] = _mm256_maskload_ps(&C[j * M + 8], mask[1]);
@@ -69,13 +93,16 @@ void kernel_16x6(const float *A, const float *B, float *C, int m, int n, int M, 
 
   // Compute
   for (int p = 0; p < K; p++) {
-    a0_vec = _mm256_loadu_ps(&A[p * M]);
-    a1_vec = _mm256_loadu_ps(&A[p * M + 8]);
-    for (int j = 0; j < n; j++) {
-      b_vec = _mm256_broadcast_ss(&B[j * K + p]);
+    a0_vec = _mm256_loadu_ps(padded_blockA);
+    a1_vec = _mm256_loadu_ps(padded_blockA + 8);
+    // Since blocks are padded, we can be sure of NR iterations.
+    for (int j = 0; j < NR; j++) {
+      b_vec = _mm256_broadcast_ss(padded_blockB + j);
       C_buffer[j][0] = _mm256_fmadd_ps(a0_vec, b_vec, C_buffer[j][0]);
       C_buffer[j][1] = _mm256_fmadd_ps(a1_vec, b_vec, C_buffer[j][1]);
     }
+    padded_blockA += MR;
+    padded_blockB += NR;
   }
 
   // Store
@@ -96,11 +123,16 @@ void kernel_16x6(const float *A, const float *B, float *C, int m, int n, int M, 
  * AVX2 implementation using 16x6 micro-kernel.
  */
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  for (int j = 0; j < N; j += NR) {
-    for (int i = 0; i < M; i += MR) {
+  float *padded_blockA = (float *)_mm_malloc(sizeof(float) * MR * K, MEM_ALIGN);
+  float *padded_blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
+
+  for (int i = 0; i < M; i += MR) {
+    const int m = min(MR, M - i);
+    maybe_pad_blockA(&A[i], padded_blockA, m, M, K);
+    for (int j = 0; j < N; j += NR) {
       const int n = min(NR, N - j);
-      const int m = min(MR, M - i);
-      kernel_16x6(&A[i], &B[j * K], &C[j * M + i], m, n, M, K);
+      maybe_pad_blockB(&B[j * K], padded_blockB, n, N, K);
+      kernel_16x6(padded_blockA, padded_blockB, &C[j * M + i], m, n, M, K);
     }
   }
 }
@@ -128,10 +160,10 @@ int main(int argc, char **argv) {
 #endif
 
   printf("Problem size M=%d, K=%d, N=%d\n", M, K, N);
-  float *A = (float *)_mm_malloc(sizeof(float) * M * K, 64);
-  float *B = (float *)_mm_malloc(sizeof(float) * K * N, 64);
-  float *C = (float *)_mm_malloc(sizeof(float) * M * N, 64);
-  float *val = (float *)_mm_malloc(sizeof(float) * M * N, 64);
+  float *A = (float *)_mm_malloc(sizeof(float) * M * K, MEM_ALIGN);
+  float *B = (float *)_mm_malloc(sizeof(float) * K * N, MEM_ALIGN);
+  float *C = (float *)_mm_malloc(sizeof(float) * M * N, MEM_ALIGN);
+  float *val = (float *)_mm_malloc(sizeof(float) * M * N, MEM_ALIGN);
 
   rand_init(A, M * K);
   rand_init(B, K * N);
