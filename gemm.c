@@ -15,7 +15,7 @@
  */
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
-  #pragma omp parallel for collapse(2)
+#pragma omp parallel for collapse(2)
   for (int j = 0; j < N; j++) {
     for (int k = 0; k < K; k++) {
       for (int i = 0; i < M; i++) {
@@ -28,21 +28,50 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 16
 #define NR 6
 
-void kernel_16x6(const float *A, const float *B, float *C, int M, int K) {
-  __m256 C_buffer[6][2];
+void kernel_16x6(const float *A, const float *B, float *C, int m, int n, int M, int K) {
+  __m256 C_buffer[NR][MR / 8];
   __m256 a0_vec, a1_vec;
   __m256 b_vec;
+  __m256i mask[2];
+
   // Load
-  for (int j = 0; j < 6; j++) {
-    C_buffer[j][0] = _mm256_load_ps(&C[j * M]);
-    C_buffer[j][1] = _mm256_load_ps(&C[j * M + 8]);
+  if (m < MR) {
+    /**
+     * Conditional load/store masks.
+     * When rows of A or C are not multiples of MR, edge blocks may have <MR rows.
+     * Lets assume m=9. In this case, we do not want to load more than 9 column elements
+     * from A (or store more than 9 column elements to C). 
+     * We need a mask that says (1=yes) and (0=no) for each position in range(0, MR)
+     * For this, we create two 8-size masks of 32-bit unsigned integers where MSB
+     * dictates whether or not an element is to be loaded.
+     * In case of m=9, we take a precomputed set of 16 indices: [0, 1, 2, 3, ..., 15]
+     * and do a broadcasted compare.
+     * cmp = [9, 9, ..., 9] > [0, 1, 2, 3, ..., 15]
+     * cmp = [1, 1, (until 8)..., 0]
+     * We move this result to the MSB bit.
+     * mask = [1<<31, 1<<31, (until 8)..., 0<<31]
+     */
+    __m256i cmp0 = _mm256_cmpgt_epi32(_mm256_set1_epi32(m), _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7));
+    mask[0] = _mm256_slli_epi32(cmp0, 31);
+    __m256i cmp1 = _mm256_cmpgt_epi32(_mm256_set1_epi32(m), _mm256_setr_epi32(8, 9, 10, 11, 12, 13, 14, 15));
+    mask[1] = _mm256_slli_epi32(cmp1, 31);
+    
+    for (int j = 0; j < n; j++) {
+      C_buffer[j][0] = _mm256_maskload_ps(&C[j * M], mask[0]);
+      C_buffer[j][1] = _mm256_maskload_ps(&C[j * M + 8], mask[1]);
+    }
+  } else {
+    for (int j = 0; j < n; j++) {
+      C_buffer[j][0] = _mm256_loadu_ps(&C[j * M]);
+      C_buffer[j][1] = _mm256_loadu_ps(&C[j * M + 8]);
+    }
   }
 
   // Compute
   for (int p = 0; p < K; p++) {
-    a0_vec = _mm256_load_ps(&A[p * M]);
-    a1_vec = _mm256_load_ps(&A[p * M + 8]);
-    for (int j = 0; j < 6; j++) {
+    a0_vec = _mm256_loadu_ps(&A[p * M]);
+    a1_vec = _mm256_loadu_ps(&A[p * M + 8]);
+    for (int j = 0; j < n; j++) {
       b_vec = _mm256_broadcast_ss(&B[j * K + p]);
       C_buffer[j][0] = _mm256_fmadd_ps(a0_vec, b_vec, C_buffer[j][0]);
       C_buffer[j][1] = _mm256_fmadd_ps(a1_vec, b_vec, C_buffer[j][1]);
@@ -50,9 +79,16 @@ void kernel_16x6(const float *A, const float *B, float *C, int M, int K) {
   }
 
   // Store
-  for (int j = 0; j < 6; j++) {
-    _mm256_store_ps(&C[j * M], C_buffer[j][0]);
-    _mm256_store_ps(&C[j * M + 8], C_buffer[j][1]);
+  if (m < MR) {
+    for (int j = 0; j < n; j++) {
+      _mm256_maskstore_ps(&C[j * M], mask[0], C_buffer[j][0]);
+      _mm256_maskstore_ps(&C[j * M + 8], mask[1], C_buffer[j][1]);
+    }
+  } else {
+    for (int j = 0; j < n; j++) {
+      _mm256_storeu_ps(&C[j * M], C_buffer[j][0]);
+      _mm256_storeu_ps(&C[j * M + 8], C_buffer[j][1]);
+    }
   }
 }
 
@@ -60,9 +96,11 @@ void kernel_16x6(const float *A, const float *B, float *C, int M, int K) {
  * AVX2 implementation using 16x6 micro-kernel.
  */
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  for (int j = 0; j < N; j+=NR) {
-    for (int i = 0; i < M; i+=MR) {
-      kernel_16x6(&A[i], &B[j * K], &C[j * M + i], M, K);
+  for (int j = 0; j < N; j += NR) {
+    for (int i = 0; i < M; i += MR) {
+      const int n = min(NR, N - j);
+      const int m = min(MR, M - i);
+      kernel_16x6(&A[i], &B[j * K], &C[j * M + i], m, n, M, K);
     }
   }
 }
