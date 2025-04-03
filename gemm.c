@@ -150,11 +150,15 @@ int main(int argc, char **argv) {
 #ifdef DEBUG
   M = N = K = 4;
 #else
-  if (argc > 1) {
-    int size = atoi(argv[1]);
-    M = N = K = size;
+  if (argc > 3) {
+    M = atoi(argv[1]);
+    K = atoi(argv[2]);
+    N = atoi(argv[3]);
+  } else if (argc > 1) {
+    M = K = N = atoi(argv[1]);
   } else {
-    printf("Usage: %s <size>\n", argv[0]);
+    printf("Usage with custom sizes: %s <M> <K> <N>\n", argv[0]);
+    printf("Usage with M=N=K: %s <size> \n", argv[0]);
     exit(EXIT_FAILURE);
   }
 #endif
@@ -191,7 +195,7 @@ int main(int argc, char **argv) {
     printf("-> GFLOP/s: %.2f (%.2f ms)\n", (2.0 * K * M * N * 1e-6f) / elapsed_time, elapsed_time);
   }
 
-  allclose(val, C, N * N, 1e-3f);
+  allclose(val, C, M * N, 1e-3f);
   printf("Match.\n");
 
   _mm_free(A);
