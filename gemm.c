@@ -75,11 +75,29 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
   for (int p = 0; p < K; p++) {
     b0_vec = _mm256_load_ps(&padded_blockB[p * NR]);
     b1_vec = _mm256_load_ps(&padded_blockB[p * NR + 8]);
-    for (int i = 0; i < MR; i++) {
-      a_vec = _mm256_broadcast_ss(&padded_blockA[i * K + p]);
-      C_buffer[i][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[i][0]);
-      C_buffer[i][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[i][1]);
-    }
+    a_vec = _mm256_broadcast_ss(&padded_blockA[0 * K + p]);
+    C_buffer[0][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
+    C_buffer[0][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[0][1]);
+
+    a_vec = _mm256_broadcast_ss(&padded_blockA[1 * K + p]);
+    C_buffer[1][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[1][0]);
+    C_buffer[1][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[1][1]);
+
+    a_vec = _mm256_broadcast_ss(&padded_blockA[2 * K + p]);
+    C_buffer[2][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[2][0]);
+    C_buffer[2][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[2][1]);
+
+    a_vec = _mm256_broadcast_ss(&padded_blockA[3 * K + p]);
+    C_buffer[3][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[3][0]);
+    C_buffer[3][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[3][1]);
+
+    a_vec = _mm256_broadcast_ss(&padded_blockA[4 * K + p]);
+    C_buffer[4][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[4][0]);
+    C_buffer[4][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[4][1]);
+
+    a_vec = _mm256_broadcast_ss(&padded_blockA[5 * K + p]);
+    C_buffer[5][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
+    C_buffer[5][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
   }
 
   // Store.
