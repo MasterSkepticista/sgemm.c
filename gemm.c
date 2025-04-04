@@ -45,11 +45,8 @@ void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K)
  * Copies elements row-wise from B up to n. Pads n->NR with zeros.
  */
 void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K) {
-  for (int p = 0; p < K; p++) {
-    for (int j = 0; j < NR; j++) {
-      *padded_blockB++ = (j < n) ? B[j * K + p] : 0.0f;
-    }
-  }
+  memset(padded_blockB, 0, sizeof(float) * NR * K);
+  memcpy(padded_blockB, B, sizeof(float) * n * K);
 }
 
 void kernel_16x6(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int K) {
@@ -97,12 +94,11 @@ void kernel_16x6(const float *padded_blockA, const float *padded_blockB, float *
     a1_vec = _mm256_loadu_ps(padded_blockA + 8);
     // Since blocks are padded, we can be sure of NR iterations.
     for (int j = 0; j < NR; j++) {
-      b_vec = _mm256_broadcast_ss(padded_blockB + j);
+      b_vec = _mm256_broadcast_ss(&padded_blockB[j * K + p]);
       C_buffer[j][0] = _mm256_fmadd_ps(a0_vec, b_vec, C_buffer[j][0]);
       C_buffer[j][1] = _mm256_fmadd_ps(a1_vec, b_vec, C_buffer[j][1]);
     }
     padded_blockA += MR;
-    padded_blockB += NR;
   }
 
   // Store
