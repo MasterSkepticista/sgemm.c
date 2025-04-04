@@ -1,5 +1,5 @@
 /**
- * Optimizing SGEMM in C.
+ * Optimizing SGEMM in C (Row-major layout).
  * clang -O2 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
@@ -23,6 +23,49 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
       for (int j = 0; j < N; j++) {
         C[i * N + j] += A[i * K + k] * B[k * N + j];
       }
+    }
+  }
+}
+
+#define MR 6
+#define NR 16
+
+/**
+ * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
+ */
+void kernel_6x16(const float *A, const float *B, float *C, int M, int N, int K) {
+  __m256 a_vec;
+  __m256 b0_vec, b1_vec;
+  __m256 C_buffer[MR][NR/8];
+
+  // Load.
+  for (int i = 0; i < MR; i++) {
+    C_buffer[i][0] = _mm256_loadu_ps(&C[i * N]);
+    C_buffer[i][1] = _mm256_loadu_ps(&C[i * N + 8]);
+  }
+
+  // Compute.
+  for (int p = 0; p < K; p++) {
+    b0_vec = _mm256_load_ps(&B[p * N]);
+    b1_vec = _mm256_load_ps(&B[p * N + 8]);
+    for (int i = 0; i < MR; i++) {
+      a_vec = _mm256_broadcast_ss(&A[i * K + p]);
+      C_buffer[i][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[i][0]);
+      C_buffer[i][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[i][1]);
+    }
+  }
+
+  // Store.
+  for (int i = 0; i < MR; i++) {
+    _mm256_storeu_ps(&C[i * N], C_buffer[i][0]);
+    _mm256_storeu_ps(&C[i * N + 8], C_buffer[i][1]);
+  }
+}
+
+void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
+  for (int i = 0; i < M; i+= MR) {
+    for (int j = 0; j < N; j+= NR) {
+      kernel_6x16(&A[i * K], &B[j], &C[i * N + j], M, N, K);
     }
   }
 }
@@ -81,7 +124,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < repeats; i++) {
     constant_init(val, M * N, 0.0f);
     double start = tick();
-    gemm_naive(A, B, val, M, N, K);
+    gemm(A, B, val, M, N, K);
     double stop = tick();
     double elapsed_time = (stop - start);
     printf("-> GFLOP/s: %.2f (%.2f ms)\n", (2.0 * K * M * N * 1e-6f) / elapsed_time, elapsed_time);
