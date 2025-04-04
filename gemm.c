@@ -30,10 +30,24 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 6
 #define NR 16
 
+void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K) {
+  memcpy(padded_blockA, A, sizeof(float) * m * K);  // Copy valid rows
+  memset(padded_blockA + m * K, 0, sizeof(float) * (MR - m) * K);  // Zero pad
+}
+
+
+void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K) {
+  for (int p = 0; p < K; p++) {
+    memcpy(padded_blockB, &B[p * N], n * sizeof(float));
+    memset(padded_blockB + n, 0, sizeof(float) * (NR - n));
+    padded_blockB += NR;
+  }
+}
+
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
-void kernel_6x16(const float *A, const float *B, float *C, int m, int n, int M, int N, int K) {
+void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int N, int K) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
   __m256 C_buffer[MR][NR / 8];
@@ -59,10 +73,10 @@ void kernel_6x16(const float *A, const float *B, float *C, int m, int n, int M, 
 
   // Compute.
   for (int p = 0; p < K; p++) {
-    b0_vec = _mm256_load_ps(&B[p * N]);
-    b1_vec = _mm256_load_ps(&B[p * N + 8]);
+    b0_vec = _mm256_load_ps(&padded_blockB[p * NR]);
+    b1_vec = _mm256_load_ps(&padded_blockB[p * NR + 8]);
     for (int i = 0; i < MR; i++) {
-      a_vec = _mm256_broadcast_ss(&A[i * K + p]);
+      a_vec = _mm256_broadcast_ss(&padded_blockA[i * K + p]);
       C_buffer[i][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[i][0]);
       C_buffer[i][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[i][1]);
     }
@@ -83,11 +97,16 @@ void kernel_6x16(const float *A, const float *B, float *C, int m, int n, int M, 
 }
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  for (int i = 0; i < M; i += MR) {
-    for (int j = 0; j < N; j += NR) {
+  float *padded_blockA = (float *)_mm_malloc(sizeof(float) * MR * K, MEM_ALIGN);
+  float *padded_blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
+
+  for (int j = 0; j < N; j += NR) {
+    const int n = min(NR, N - j);
+    maybe_pad_blockB(&B[j], padded_blockB, n, N, K);
+    for (int i = 0; i < M; i += MR) {
       const int m = min(MR, M - i);
-      const int n = min(NR, N - j);
-      kernel_6x16(&A[i * K], &B[j], &C[i * N + j], m, n, M, N, K);
+      maybe_pad_blockA(&A[i * K], padded_blockA, m, M, K);
+      kernel_6x16(padded_blockA, padded_blockB, &C[i * N + j], m, n, M, N, K);
     }
   }
 }
