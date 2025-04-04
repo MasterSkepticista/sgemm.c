@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C.
- * clang-18 -O2 -march=native gemm.c -o ./gemm && ./gemm 1024
+ * clang -O2 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
 #include <math.h>
@@ -18,117 +18,11 @@
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
 #pragma omp parallel for
-  for (int j = 0; j < N; j++) {
+  for (int i = 0; i < M; i++) {
     for (int k = 0; k < K; k++) {
-      for (int i = 0; i < M; i++) {
-        C[j * M + i] += A[k * M + i] * B[j * K + k];
+      for (int j = 0; j < N; j++) {
+        C[i * N + j] += A[i * K + k] * B[k * N + j];
       }
-    }
-  }
-}
-
-#define MR 16
-#define NR 6
-
-/**
- * Copies elements column-wise from A up to m. Pads m->MR with zeros.
- */
-void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K) {
-  for (int p = 0; p < K; p++) {
-    for (int i = 0; i < MR; i++) {
-      *padded_blockA++ = (i < m) ? A[p * M + i] : 0.0f;
-    }
-  }
-}
-
-/**
- * Copies elements row-wise from B up to n. Pads n->NR with zeros.
- */
-void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K) {
-  memset(padded_blockB, 0, sizeof(float) * NR * K);
-  memcpy(padded_blockB, B, sizeof(float) * n * K);
-}
-
-void kernel_16x6(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int K) {
-  __m256 C_buffer[NR][MR / 8];
-  __m256 a0_vec, a1_vec;
-  __m256 b_vec;
-  __m256i mask[2];
-
-  // Load
-  if (m < MR) {
-    /**
-     * Conditional load/store masks.
-     * When rows of A or C are not multiples of MR, edge blocks may have <MR rows.
-     * Lets assume m=9. In this case, we do not want to load more than 9 column elements
-     * from A (or store more than 9 column elements to C).
-     * We need a mask that says (1=yes) and (0=no) for each position in range(0, MR)
-     * For this, we create two 8-size masks of 32-bit unsigned integers where MSB
-     * dictates whether or not an element is to be loaded.
-     * In case of m=9, we take a precomputed set of 16 indices: [0, 1, 2, 3, ..., 15]
-     * and do a broadcasted compare.
-     * cmp = [9, 9, ..., 9] > [0, 1, 2, 3, ..., 15]
-     * cmp = [1, 1, (until 8)..., 0]
-     * We move this result to the MSB bit.
-     * mask = [1<<31, 1<<31, (until 8)..., 0<<31]
-     */
-    __m256i cmp0 = _mm256_cmpgt_epi32(_mm256_set1_epi32(m), _mm256_setr_epi32(0, 1, 2, 3, 4, 5, 6, 7));
-    mask[0] = _mm256_slli_epi32(cmp0, 31);
-    __m256i cmp1 = _mm256_cmpgt_epi32(_mm256_set1_epi32(m), _mm256_setr_epi32(8, 9, 10, 11, 12, 13, 14, 15));
-    mask[1] = _mm256_slli_epi32(cmp1, 31);
-
-    for (int j = 0; j < n; j++) {
-      C_buffer[j][0] = _mm256_maskload_ps(&C[j * M], mask[0]);
-      C_buffer[j][1] = _mm256_maskload_ps(&C[j * M + 8], mask[1]);
-    }
-  } else {
-    for (int j = 0; j < n; j++) {
-      C_buffer[j][0] = _mm256_loadu_ps(&C[j * M]);
-      C_buffer[j][1] = _mm256_loadu_ps(&C[j * M + 8]);
-    }
-  }
-
-  // Compute
-  for (int p = 0; p < K; p++) {
-    a0_vec = _mm256_loadu_ps(padded_blockA);
-    a1_vec = _mm256_loadu_ps(padded_blockA + 8);
-    // Since blocks are padded, we can be sure of NR iterations.
-    for (int j = 0; j < NR; j++) {
-      b_vec = _mm256_broadcast_ss(&padded_blockB[j * K + p]);
-      C_buffer[j][0] = _mm256_fmadd_ps(a0_vec, b_vec, C_buffer[j][0]);
-      C_buffer[j][1] = _mm256_fmadd_ps(a1_vec, b_vec, C_buffer[j][1]);
-    }
-    padded_blockA += MR;
-  }
-
-  // Store
-  if (m < MR) {
-    for (int j = 0; j < n; j++) {
-      _mm256_maskstore_ps(&C[j * M], mask[0], C_buffer[j][0]);
-      _mm256_maskstore_ps(&C[j * M + 8], mask[1], C_buffer[j][1]);
-    }
-  } else {
-    for (int j = 0; j < n; j++) {
-      _mm256_storeu_ps(&C[j * M], C_buffer[j][0]);
-      _mm256_storeu_ps(&C[j * M + 8], C_buffer[j][1]);
-    }
-  }
-}
-
-/**
- * AVX2 implementation using 16x6 micro-kernel.
- */
-void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  float *padded_blockA = (float *)_mm_malloc(sizeof(float) * MR * K, MEM_ALIGN);
-  float *padded_blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
-
-  for (int i = 0; i < M; i += MR) {
-    const int m = min(MR, M - i);
-    maybe_pad_blockA(&A[i], padded_blockA, m, M, K);
-    for (int j = 0; j < N; j += NR) {
-      const int n = min(NR, N - j);
-      maybe_pad_blockB(&B[j * K], padded_blockB, n, N, K);
-      kernel_16x6(padded_blockA, padded_blockB, &C[j * M + i], m, n, M, K);
     }
   }
 }
@@ -138,7 +32,9 @@ int main(int argc, char **argv) {
    * Xeon 6258R
    * 2 AVX-512 FMA units
    * = 2 * 16 * 2 = 64 FLOP/cycle
-   * = 2.7 * 64 = 172.8 GFLOP/s at 2.7GHz
+   * = 2.5 * 64 = 160 GFLOP/s at 2.5GHz
+   * 
+   * Equivalently, 80 GFLOP/s using AVX-256
    */
 
   // initialize
@@ -185,7 +81,7 @@ int main(int argc, char **argv) {
   for (int i = 0; i < repeats; i++) {
     constant_init(val, M * N, 0.0f);
     double start = tick();
-    gemm(A, B, val, M, N, K);
+    gemm_naive(A, B, val, M, N, K);
     double stop = tick();
     double elapsed_time = (stop - start);
     printf("-> GFLOP/s: %.2f (%.2f ms)\n", (2.0 * K * M * N * 1e-6f) / elapsed_time, elapsed_time);
