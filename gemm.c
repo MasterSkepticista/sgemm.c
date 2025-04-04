@@ -28,7 +28,7 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 }
 
 #define MR 6
-#define NR 16
+#define NR 48
 
 void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K) {
   memcpy(padded_blockA, A, sizeof(float) * m * K);  // Copy valid rows
@@ -48,68 +48,78 @@ void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K)
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
 void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int N, int K) {
-  __m256 a_vec;
-  __m256 b0_vec, b1_vec;
-  __m256 C_buffer[MR][NR / 8];
-  __m256i masks[2];
+  __m512 a_vec;
+  __m512 b0_vec, b1_vec, b2_vec;
+  __m512 C_buffer[MR][NR / 16];
+  __mmask16 masks[3];
 
   // Load.
   if (n < NR) {
-    const unsigned int bitmask = 65535;
-    masks[0] = _mm256_setr_epi32(bitmask << (n + 15), bitmask << (n + 14), bitmask << (n + 13), bitmask << (n + 12),
-                                 bitmask << (n + 11), bitmask << (n + 10), bitmask << (n + 9), bitmask << (n + 8));
-    masks[1] = _mm256_setr_epi32(bitmask << (n + 7), bitmask << (n + 6), bitmask << (n + 5), bitmask << (n + 4),
-                                 bitmask << (n + 3), bitmask << (n + 2), bitmask << (n + 1), bitmask << (n + 0));
+    masks[0] = _cvtu32_mask16((1 << (n > 16 ? 16 : n)) - 1);
+    masks[1] = _cvtu32_mask16((1 << ((n > 16 ? n - 16 : 0) > 16 ? 16 : (n > 16 ? n - 16 : 0))) - 1);
+    masks[2] = _cvtu32_mask16((1 << ((n > 32 ? n - 32 : 0) > 16 ? 16 : (n > 32 ? n - 32 : 0))) - 1);
     for (int i = 0; i < m; i++) {
-      C_buffer[i][0] = _mm256_maskload_ps(&C[i * N], masks[0]);
-      C_buffer[i][1] = _mm256_maskload_ps(&C[i * N + 8], masks[1]);
+      C_buffer[i][0] = _mm512_maskz_loadu_ps(masks[0], &C[i * N]);
+      C_buffer[i][1] = _mm512_maskz_loadu_ps(masks[1], &C[i * N + 16]);
+      C_buffer[i][2] = _mm512_maskz_loadu_ps(masks[2], &C[i * N + 32]);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      C_buffer[i][0] = _mm256_loadu_ps(&C[i * N]);
-      C_buffer[i][1] = _mm256_loadu_ps(&C[i * N + 8]);
+      C_buffer[i][0] = _mm512_loadu_ps(&C[i * N]);
+      C_buffer[i][1] = _mm512_loadu_ps(&C[i * N + 16]);
+      C_buffer[i][2] = _mm512_loadu_ps(&C[i * N + 32]);
     }
   }
 
   // Compute.
   for (int p = 0; p < K; p++) {
-    b0_vec = _mm256_load_ps(&padded_blockB[p * NR]);
-    b1_vec = _mm256_load_ps(&padded_blockB[p * NR + 8]);
-    a_vec = _mm256_broadcast_ss(&padded_blockA[0 * K + p]);
-    C_buffer[0][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
-    C_buffer[0][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[0][1]);
+    b0_vec = _mm512_load_ps(&padded_blockB[p * NR]);
+    b1_vec = _mm512_load_ps(&padded_blockB[p * NR + 16]);
+    b2_vec = _mm512_load_ps(&padded_blockB[p * NR + 32]);
 
-    a_vec = _mm256_broadcast_ss(&padded_blockA[1 * K + p]);
-    C_buffer[1][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[1][0]);
-    C_buffer[1][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[1][1]);
+    a_vec = _mm512_set1_ps(padded_blockA[0 * K + p]);
+    C_buffer[0][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
+    C_buffer[0][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[0][1]);
+    C_buffer[0][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[0][2]);
 
-    a_vec = _mm256_broadcast_ss(&padded_blockA[2 * K + p]);
-    C_buffer[2][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[2][0]);
-    C_buffer[2][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[2][1]);
+    a_vec = _mm512_set1_ps(padded_blockA[1 * K + p]);
+    C_buffer[1][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[1][0]);
+    C_buffer[1][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[1][1]);
+    C_buffer[1][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[1][2]);
 
-    a_vec = _mm256_broadcast_ss(&padded_blockA[3 * K + p]);
-    C_buffer[3][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[3][0]);
-    C_buffer[3][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[3][1]);
+    a_vec = _mm512_set1_ps(padded_blockA[2 * K + p]);
+    C_buffer[2][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[2][0]);
+    C_buffer[2][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[2][1]);
+    C_buffer[2][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[2][2]);
 
-    a_vec = _mm256_broadcast_ss(&padded_blockA[4 * K + p]);
-    C_buffer[4][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[4][0]);
-    C_buffer[4][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[4][1]);
+    a_vec = _mm512_set1_ps(padded_blockA[3 * K + p]);
+    C_buffer[3][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[3][0]);
+    C_buffer[3][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[3][1]);
+    C_buffer[3][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[3][2]);
 
-    a_vec = _mm256_broadcast_ss(&padded_blockA[5 * K + p]);
-    C_buffer[5][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
-    C_buffer[5][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
+    a_vec = _mm512_set1_ps(padded_blockA[4 * K + p]);
+    C_buffer[4][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[4][0]);
+    C_buffer[4][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[4][1]);
+    C_buffer[4][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[4][2]);
+
+    a_vec = _mm512_set1_ps(padded_blockA[5 * K + p]);
+    C_buffer[5][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
+    C_buffer[5][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
+    C_buffer[5][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[5][2]);
   }
 
   // Store.
   if (n < NR) {
     for (int i = 0; i < m; i++) {
-      _mm256_maskstore_ps(&C[i * N], masks[0], C_buffer[i][0]);
-      _mm256_maskstore_ps(&C[i * N + 8], masks[1], C_buffer[i][1]);
+      _mm512_mask_storeu_ps(&C[i * N], masks[0], C_buffer[i][0]);
+      _mm512_mask_storeu_ps(&C[i * N + 16], masks[1], C_buffer[i][1]);
+      _mm512_mask_storeu_ps(&C[i * N + 32], masks[2], C_buffer[i][2]);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      _mm256_storeu_ps(&C[i * N], C_buffer[i][0]);
-      _mm256_storeu_ps(&C[i * N + 8], C_buffer[i][1]);
+      _mm512_storeu_ps(&C[i * N], C_buffer[i][0]);
+      _mm512_storeu_ps(&C[i * N + 16], C_buffer[i][1]);
+      _mm512_storeu_ps(&C[i * N + 32], C_buffer[i][2]);
     }
   }
 }
