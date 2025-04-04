@@ -33,15 +33,28 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
-void kernel_6x16(const float *A, const float *B, float *C, int M, int N, int K) {
+void kernel_6x16(const float *A, const float *B, float *C, int m, int n, int M, int N, int K) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
-  __m256 C_buffer[MR][NR/8];
+  __m256 C_buffer[MR][NR / 8];
+  __m256i masks[2];
 
   // Load.
-  for (int i = 0; i < MR; i++) {
-    C_buffer[i][0] = _mm256_loadu_ps(&C[i * N]);
-    C_buffer[i][1] = _mm256_loadu_ps(&C[i * N + 8]);
+  if (n < NR) {
+    const unsigned int bitmask = 65535;
+    masks[0] = _mm256_setr_epi32(bitmask << (n + 15), bitmask << (n + 14), bitmask << (n + 13), bitmask << (n + 12),
+                                 bitmask << (n + 11), bitmask << (n + 10), bitmask << (n + 9), bitmask << (n + 8));
+    masks[1] = _mm256_setr_epi32(bitmask << (n + 7), bitmask << (n + 6), bitmask << (n + 5), bitmask << (n + 4),
+                                 bitmask << (n + 3), bitmask << (n + 2), bitmask << (n + 1), bitmask << (n + 0));
+    for (int i = 0; i < m; i++) {
+      C_buffer[i][0] = _mm256_maskload_ps(&C[i * N], masks[0]);
+      C_buffer[i][1] = _mm256_maskload_ps(&C[i * N + 8], masks[1]);
+    }
+  } else {
+    for (int i = 0; i < m; i++) {
+      C_buffer[i][0] = _mm256_loadu_ps(&C[i * N]);
+      C_buffer[i][1] = _mm256_loadu_ps(&C[i * N + 8]);
+    }
   }
 
   // Compute.
@@ -56,16 +69,25 @@ void kernel_6x16(const float *A, const float *B, float *C, int M, int N, int K) 
   }
 
   // Store.
-  for (int i = 0; i < MR; i++) {
-    _mm256_storeu_ps(&C[i * N], C_buffer[i][0]);
-    _mm256_storeu_ps(&C[i * N + 8], C_buffer[i][1]);
+  if (n < NR) {
+    for (int i = 0; i < m; i++) {
+      _mm256_maskstore_ps(&C[i * N], masks[0], C_buffer[i][0]);
+      _mm256_maskstore_ps(&C[i * N + 8], masks[1], C_buffer[i][1]);
+    }
+  } else {
+    for (int i = 0; i < m; i++) {
+      _mm256_storeu_ps(&C[i * N], C_buffer[i][0]);
+      _mm256_storeu_ps(&C[i * N + 8], C_buffer[i][1]);
+    }
   }
 }
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
-  for (int i = 0; i < M; i+= MR) {
-    for (int j = 0; j < N; j+= NR) {
-      kernel_6x16(&A[i * K], &B[j], &C[i * N + j], M, N, K);
+  for (int i = 0; i < M; i += MR) {
+    for (int j = 0; j < N; j += NR) {
+      const int m = min(MR, M - i);
+      const int n = min(NR, N - j);
+      kernel_6x16(&A[i * K], &B[j], &C[i * N + j], m, n, M, N, K);
     }
   }
 }
@@ -76,7 +98,7 @@ int main(int argc, char **argv) {
    * 2 AVX-512 FMA units
    * = 2 * 16 * 2 = 64 FLOP/cycle
    * = 2.5 * 64 = 160 GFLOP/s at 2.5GHz
-   * 
+   *
    * Equivalently, 80 GFLOP/s using AVX-256
    */
 
