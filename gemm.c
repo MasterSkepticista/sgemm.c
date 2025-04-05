@@ -115,6 +115,7 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
 }
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
+  memset(C, 0, M * N * sizeof(float));
   float *padded_blockA = (float *)_mm_malloc(sizeof(float) * MR * K, MEM_ALIGN);
   float *padded_blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
 
@@ -138,12 +139,7 @@ int main(int argc, char **argv) {
    *
    * Equivalently, 80 GFLOP/s using AVX-256
    */
-
-  // initialize
   int M, N, K;
-#ifdef DEBUG
-  M = N = K = 4;
-#else
   if (argc > 3) {
     M = atoi(argv[1]);
     K = atoi(argv[2]);
@@ -155,9 +151,8 @@ int main(int argc, char **argv) {
     printf("Usage with M=N=K: %s <size> \n", argv[0]);
     exit(EXIT_FAILURE);
   }
-#endif
 
-  printf("Problem size M=%d, K=%d, N=%d\n", M, K, N);
+  // Initialize
   float *A = (float *)_mm_malloc(sizeof(float) * M * K, MEM_ALIGN);
   float *B = (float *)_mm_malloc(sizeof(float) * K * N, MEM_ALIGN);
   float *C = (float *)_mm_malloc(sizeof(float) * M * N, MEM_ALIGN);
@@ -170,27 +165,21 @@ int main(int argc, char **argv) {
 
   // Ground truth.
   gemm_naive(A, B, C, M, N, K);
-  printf("Naive SGEMM done.\n");
-
-#ifdef DEBUG
-  print_matrix(A, M, K);
-  print_matrix(B, K, N);
-  print_matrix(C, M, N);
-#endif
 
   // Benchmark
   int repeats = 4;
+  double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
-    constant_init(val, M * N, 0.0f);
     double start = tick();
     gemm(A, B, val, M, N, K);
     double stop = tick();
+    allclose(val, C, M * N, 1e-3f);
     double elapsed_time = (stop - start);
-    printf("-> GFLOP/s: %.2f (%.2f ms)\n", (2.0 * K * M * N * 1e-6f) / elapsed_time, elapsed_time);
+    double gflops = (2.0 * K * M * N * 1e-6f) / elapsed_time;
+    total_gflops += gflops;
   }
-
-  allclose(val, C, M * N, 1e-3f);
-  printf("Match.\n");
+  double average_gflops = total_gflops / repeats;
+  printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, average_gflops);
 
   _mm_free(A);
   _mm_free(B);
