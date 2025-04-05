@@ -31,15 +31,14 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define NR 48
 
 void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K) {
-  memcpy(padded_blockA, A, sizeof(float) * m * K);  // Copy valid rows
+  memcpy(padded_blockA, A, sizeof(float) * m * K);                 // Copy valid rows
   memset(padded_blockA + m * K, 0, sizeof(float) * (MR - m) * K);  // Zero pad
 }
 
-
 void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K) {
   for (int p = 0; p < K; p++) {
-    memcpy(padded_blockB, &B[p * N], n * sizeof(float));
-    memset(padded_blockB + n, 0, sizeof(float) * (NR - n));
+    memcpy(padded_blockB, &B[p * N], n * sizeof(float));     // Copy valid columns
+    memset(padded_blockB + n, 0, sizeof(float) * (NR - n));  // Pad remaining columns
     padded_blockB += NR;
   }
 }
