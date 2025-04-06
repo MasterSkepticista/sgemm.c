@@ -49,25 +49,26 @@ void maybe_pad_blockB(const float *B, float *padded_blockB, int nc, int N, int K
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
-void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int N, int K) {
+void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int mc, int nc, int M, int N,
+                 int K) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
   __m256 C_buffer[MR][NR / 8];
   __m256i masks[2];
 
   // Load.
-  if (n < NR) {
+  if (nc < NR) {
     const unsigned int bitmask = 65535;
-    masks[0] = _mm256_setr_epi32(bitmask << (n + 15), bitmask << (n + 14), bitmask << (n + 13), bitmask << (n + 12),
-                                 bitmask << (n + 11), bitmask << (n + 10), bitmask << (n + 9), bitmask << (n + 8));
-    masks[1] = _mm256_setr_epi32(bitmask << (n + 7), bitmask << (n + 6), bitmask << (n + 5), bitmask << (n + 4),
-                                 bitmask << (n + 3), bitmask << (n + 2), bitmask << (n + 1), bitmask << (n + 0));
-    for (int i = 0; i < m; i++) {
+    masks[0] = _mm256_setr_epi32(bitmask << (nc + 15), bitmask << (nc + 14), bitmask << (nc + 13), bitmask << (nc + 12),
+                                 bitmask << (nc + 11), bitmask << (nc + 10), bitmask << (nc + 9), bitmask << (nc + 8));
+    masks[1] = _mm256_setr_epi32(bitmask << (nc + 7), bitmask << (nc + 6), bitmask << (nc + 5), bitmask << (nc + 4),
+                                 bitmask << (nc + 3), bitmask << (nc + 2), bitmask << (nc + 1), bitmask << (nc + 0));
+    for (int i = 0; i < mc; i++) {
       C_buffer[i][0] = _mm256_maskload_ps(&C[i * N], masks[0]);
       C_buffer[i][1] = _mm256_maskload_ps(&C[i * N + 8], masks[1]);
     }
   } else {
-    for (int i = 0; i < m; i++) {
+    for (int i = 0; i < mc; i++) {
       C_buffer[i][0] = _mm256_loadu_ps(&C[i * N]);
       C_buffer[i][1] = _mm256_loadu_ps(&C[i * N + 8]);
     }
@@ -75,8 +76,8 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
 
   // Compute.
   for (int p = 0; p < K; p++) {
-    b0_vec = _mm256_load_ps(&padded_blockB[p * NC]);
-    b1_vec = _mm256_load_ps(&padded_blockB[p * NC + 8]);
+    b0_vec = _mm256_load_ps(padded_blockB);
+    b1_vec = _mm256_load_ps(padded_blockB + 8);
     a_vec = _mm256_broadcast_ss(&padded_blockA[0 * K + p]);
     C_buffer[0][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
     C_buffer[0][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[0][1]);
@@ -100,16 +101,18 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
     a_vec = _mm256_broadcast_ss(&padded_blockA[5 * K + p]);
     C_buffer[5][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
     C_buffer[5][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
+
+    padded_blockB += NC;
   }
 
   // Store.
-  if (n < NR) {
-    for (int i = 0; i < m; i++) {
+  if (nc < NR) {
+    for (int i = 0; i < mc; i++) {
       _mm256_maskstore_ps(&C[i * N], masks[0], C_buffer[i][0]);
       _mm256_maskstore_ps(&C[i * N + 8], masks[1], C_buffer[i][1]);
     }
   } else {
-    for (int i = 0; i < m; i++) {
+    for (int i = 0; i < mc; i++) {
       _mm256_storeu_ps(&C[i * N], C_buffer[i][0]);
       _mm256_storeu_ps(&C[i * N + 8], C_buffer[i][1]);
     }
