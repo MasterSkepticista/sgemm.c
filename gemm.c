@@ -48,8 +48,16 @@ void maybe_pad_blockB(const float *B, float *padded_blockB, int nc, int N, int K
 
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
+ * 
+ * @param padded_blockA: Ptr to block of size (MC, K).
+ * @param padded_blockB: Ptr to block of size (K, NC).
+ * @param C: Ptr to C where (mc, nc) result values will be written.
+ * @param mc: Number of valid rows to write at given C ptr. mc <= MC in all cases.
+ * @param nc: Number of valid columns to write at given C ptr. nc <= NC in all cases.
+ * @param N: Number of columns in C.
+ * @param K: Number of columns in padded_blockA (or, number of rows in padded_blockB).
  */
-void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int mc, int nc, int M, int N,
+void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int mc, int nc, int N,
                  int K) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
@@ -74,7 +82,7 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
     }
   }
 
-  // Compute.
+  // Compute partial gemm on entire padded (MC, K) @ (K, NC).
   for (int p = 0; p < K; p++) {
     b0_vec = _mm256_load_ps(padded_blockB);
     b1_vec = _mm256_load_ps(padded_blockB + 8);
@@ -136,7 +144,7 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
         for (int ir = 0; ir < mc; ir += MR) {
           const int nr = min(NR, nc - jr);
           const int mr = min(MR, mc - ir);
-          kernel_6x16(&padded_blockA[ir * K], &padded_blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, M, N, K);
+          kernel_6x16(&padded_blockA[ir * K], &padded_blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, N, K);
         }
       }
     }
