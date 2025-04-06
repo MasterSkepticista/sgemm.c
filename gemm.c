@@ -136,15 +136,17 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
 
   for (int j = 0; j < N; j += NC) {
     const int nc = min(NC, N - j);
+    maybe_pad_blockB(&B[j], padded_blockB, nc, N, K);
     for (int i = 0; i < M; i += MC) {
       const int mc = min(MC, M - i);
+      maybe_pad_blockA(&A[i * K], padded_blockA, mc, M, K);
 
       // Iterate over each MRxNR tile.
       for (int jr = 0; jr < nc; jr += NR) {
         for (int ir = 0; ir < mc; ir += MR) {
           const int nr = min(NR, nc - jr);
           const int mr = min(MR, mc - ir);
-          kernel_6x16(&A[(i + ir) * K], &B[(j + jr)], &C[(i + ir) * N + (j + jr)], mr, nr, 0, K, K, N, N);
+          kernel_6x16(&padded_blockA[ir * K], &padded_blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, 0, K, K, NC, N);
         }
       }
     }
