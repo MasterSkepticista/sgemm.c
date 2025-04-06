@@ -48,41 +48,40 @@ void maybe_pad_blockB(const float *B, float *padded_blockB, int nc, int N, int K
 
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
- * 
- * @param padded_blockA: Ptr to block of size (MC, K).
- * @param padded_blockB: Ptr to block of size (K, NC).
- * @param C: Ptr to C where (mc, nc) result values will be written.
- * @param mc: Number of valid rows to write at given C ptr. mc <= MC in all cases.
- * @param nc: Number of valid columns to write at given C ptr. nc <= NC in all cases.
+ *
+ * @param padded_blockA: Ptr to block of size (MR, K).
+ * @param padded_blockB: Ptr to block of size (K, NR).
+ * @param C: Ptr to C where (m, nc) result values will be written.
+ * @param m: Number of valid rows to write at given C ptr. m <= MR in all cases.
+ * @param n: Number of valid cols to write at given C ptr. n <= NR in all cases.
  * @param N: Number of columns in C.
  * @param K: Number of columns in padded_blockA (or, number of rows in padded_blockB).
  */
-void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int mc, int nc, int N,
-                 int K) {
+void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int N, int K) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
   __m256 C_buffer[MR][NR / 8];
   __m256i masks[2];
 
   // Load.
-  if (nc < NR) {
+  if (n < NR) {
     const unsigned int bitmask = 65535;
-    masks[0] = _mm256_setr_epi32(bitmask << (nc + 15), bitmask << (nc + 14), bitmask << (nc + 13), bitmask << (nc + 12),
-                                 bitmask << (nc + 11), bitmask << (nc + 10), bitmask << (nc + 9), bitmask << (nc + 8));
-    masks[1] = _mm256_setr_epi32(bitmask << (nc + 7), bitmask << (nc + 6), bitmask << (nc + 5), bitmask << (nc + 4),
-                                 bitmask << (nc + 3), bitmask << (nc + 2), bitmask << (nc + 1), bitmask << (nc + 0));
-    for (int i = 0; i < mc; i++) {
+    masks[0] = _mm256_setr_epi32(bitmask << (n + 15), bitmask << (n + 14), bitmask << (n + 13), bitmask << (n + 12),
+                                 bitmask << (n + 11), bitmask << (n + 10), bitmask << (n + 9), bitmask << (n + 8));
+    masks[1] = _mm256_setr_epi32(bitmask << (n + 7), bitmask << (n + 6), bitmask << (n + 5), bitmask << (n + 4),
+                                 bitmask << (n + 3), bitmask << (n + 2), bitmask << (n + 1), bitmask << (n + 0));
+    for (int i = 0; i < m; i++) {
       C_buffer[i][0] = _mm256_maskload_ps(&C[i * N], masks[0]);
       C_buffer[i][1] = _mm256_maskload_ps(&C[i * N + 8], masks[1]);
     }
   } else {
-    for (int i = 0; i < mc; i++) {
+    for (int i = 0; i < m; i++) {
       C_buffer[i][0] = _mm256_loadu_ps(&C[i * N]);
       C_buffer[i][1] = _mm256_loadu_ps(&C[i * N + 8]);
     }
   }
 
-  // Compute partial gemm on entire padded (MC, K) @ (K, NC).
+  // Compute partial gemm on entire padded (MR, K) @ (K, NR).
   for (int p = 0; p < K; p++) {
     b0_vec = _mm256_load_ps(padded_blockB);
     b1_vec = _mm256_load_ps(padded_blockB + 8);
@@ -110,17 +109,17 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
     C_buffer[5][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
     C_buffer[5][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
 
-    padded_blockB += NC;
+    padded_blockB += NR;
   }
 
   // Store.
-  if (nc < NR) {
-    for (int i = 0; i < mc; i++) {
+  if (n < NR) {
+    for (int i = 0; i < m; i++) {
       _mm256_maskstore_ps(&C[i * N], masks[0], C_buffer[i][0]);
       _mm256_maskstore_ps(&C[i * N + 8], masks[1], C_buffer[i][1]);
     }
   } else {
-    for (int i = 0; i < mc; i++) {
+    for (int i = 0; i < m; i++) {
       _mm256_storeu_ps(&C[i * N], C_buffer[i][0]);
       _mm256_storeu_ps(&C[i * N + 8], C_buffer[i][1]);
     }
