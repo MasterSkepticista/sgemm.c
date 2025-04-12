@@ -45,10 +45,13 @@ void pad_blockA(const float *A, float *blockA, int mc, int M, int ldA) {
 }
 
 void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
-  for (int p = 0; p < K; p++) {
-    memcpy(blockB, &B[p * ldB], nc * sizeof(float));
-    memset(blockB + nc, 0, sizeof(float) * (NC - nc));
-    blockB += NC;
+  for (int jr = 0; jr < nc; jr += NR) {
+    const int n = min(NR, nc - jr);
+    for (int p = 0; p < K; p++) {
+      for (int j = 0; j < NR; j++) {
+        blockB[p * NC + (jr + j)] = (j < n) ? B[p * K + (jr + j)] : 0.0f;
+      }
+    }
   }
 }
 
