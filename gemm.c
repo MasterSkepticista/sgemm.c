@@ -30,23 +30,35 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 6
 #define NR 48
 
-void maybe_pad_blockA(const float *A, float *padded_blockA, int m, int M, int K) {
-  memcpy(padded_blockA, A, sizeof(float) * m * K);                 // Copy valid rows
-  memset(padded_blockA + m * K, 0, sizeof(float) * (MR - m) * K);  // Zero pad
+#define MC 60
+#define NC 480
+
+void pad_blockA(const float *A, float *blockA, int mc, int M, int ldA) {
+  for (int ir = 0; ir < mc; ir += MR) {
+    const int m = min(MR, mc - ir);
+    for (int p = 0; p < ldA; p++) {
+      for (int i = 0; i < MR; i++) {
+        blockA[ir * ldA + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
+      }
+    }
+  }
 }
 
-void maybe_pad_blockB(const float *B, float *padded_blockB, int n, int N, int K) {
-  for (int p = 0; p < K; p++) {
-    memcpy(padded_blockB, &B[p * N], n * sizeof(float));     // Copy valid columns
-    memset(padded_blockB + n, 0, sizeof(float) * (NR - n));  // Pad remaining columns
-    padded_blockB += NR;
+void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
+  for (int jr = 0; jr < nc; jr += NR) {
+    const int n = min(NR, nc - jr);
+    for (int p = 0; p < K; p++) {
+      for (int j = 0; j < NR; j++) {
+        blockB[jr * K + p * NR + j] = (j < n) ? B[p * K + (jr + j)] : 0.0f;
+      }
+    }
   }
 }
 
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
-void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *C, int m, int n, int M, int N, int K) {
+void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int K, int ldC) {
   __m512 a_vec;
   __m512 b0_vec, b1_vec, b2_vec;
   __m512 C_buffer[MR][NR / 16];
@@ -58,83 +70,94 @@ void kernel_6x16(const float *padded_blockA, const float *padded_blockB, float *
     masks[1] = _cvtu32_mask16((1 << ((n > 16 ? n - 16 : 0) > 16 ? 16 : (n > 16 ? n - 16 : 0))) - 1);
     masks[2] = _cvtu32_mask16((1 << ((n > 32 ? n - 32 : 0) > 16 ? 16 : (n > 32 ? n - 32 : 0))) - 1);
     for (int i = 0; i < m; i++) {
-      C_buffer[i][0] = _mm512_maskz_loadu_ps(masks[0], &C[i * N]);
-      C_buffer[i][1] = _mm512_maskz_loadu_ps(masks[1], &C[i * N + 16]);
-      C_buffer[i][2] = _mm512_maskz_loadu_ps(masks[2], &C[i * N + 32]);
+      C_buffer[i][0] = _mm512_maskz_loadu_ps(masks[0], &C[i * ldC]);
+      C_buffer[i][1] = _mm512_maskz_loadu_ps(masks[1], &C[i * ldC + 16]);
+      C_buffer[i][2] = _mm512_maskz_loadu_ps(masks[2], &C[i * ldC + 32]);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      C_buffer[i][0] = _mm512_loadu_ps(&C[i * N]);
-      C_buffer[i][1] = _mm512_loadu_ps(&C[i * N + 16]);
-      C_buffer[i][2] = _mm512_loadu_ps(&C[i * N + 32]);
+      C_buffer[i][0] = _mm512_loadu_ps(&C[i * ldC]);
+      C_buffer[i][1] = _mm512_loadu_ps(&C[i * ldC + 16]);
+      C_buffer[i][2] = _mm512_loadu_ps(&C[i * ldC + 32]);
     }
   }
 
   // Compute.
   for (int p = 0; p < K; p++) {
-    b0_vec = _mm512_load_ps(&padded_blockB[p * NR]);
-    b1_vec = _mm512_load_ps(&padded_blockB[p * NR + 16]);
-    b2_vec = _mm512_load_ps(&padded_blockB[p * NR + 32]);
+    b0_vec = _mm512_load_ps(blockB);
+    b1_vec = _mm512_load_ps(blockB + 16);
+    b2_vec = _mm512_load_ps(blockB + 32);
 
-    a_vec = _mm512_set1_ps(padded_blockA[0 * K + p]);
+    a_vec = _mm512_set1_ps(*(blockA + 0));
     C_buffer[0][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
     C_buffer[0][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[0][1]);
     C_buffer[0][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[0][2]);
 
-    a_vec = _mm512_set1_ps(padded_blockA[1 * K + p]);
+    a_vec = _mm512_set1_ps(*(blockA + 1));
     C_buffer[1][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[1][0]);
     C_buffer[1][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[1][1]);
     C_buffer[1][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[1][2]);
 
-    a_vec = _mm512_set1_ps(padded_blockA[2 * K + p]);
+    a_vec = _mm512_set1_ps(*(blockA + 2));
     C_buffer[2][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[2][0]);
     C_buffer[2][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[2][1]);
     C_buffer[2][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[2][2]);
 
-    a_vec = _mm512_set1_ps(padded_blockA[3 * K + p]);
+    a_vec = _mm512_set1_ps(*(blockA + 3));
     C_buffer[3][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[3][0]);
     C_buffer[3][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[3][1]);
     C_buffer[3][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[3][2]);
 
-    a_vec = _mm512_set1_ps(padded_blockA[4 * K + p]);
+    a_vec = _mm512_set1_ps(*(blockA + 4));
     C_buffer[4][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[4][0]);
     C_buffer[4][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[4][1]);
     C_buffer[4][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[4][2]);
 
-    a_vec = _mm512_set1_ps(padded_blockA[5 * K + p]);
+    a_vec = _mm512_set1_ps(*(blockA + 5));
     C_buffer[5][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
     C_buffer[5][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
     C_buffer[5][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[5][2]);
+
+    blockA += MR;
+    blockB += NR;
   }
 
   // Store.
   if (n < NR) {
     for (int i = 0; i < m; i++) {
-      _mm512_mask_storeu_ps(&C[i * N], masks[0], C_buffer[i][0]);
-      _mm512_mask_storeu_ps(&C[i * N + 16], masks[1], C_buffer[i][1]);
-      _mm512_mask_storeu_ps(&C[i * N + 32], masks[2], C_buffer[i][2]);
+      _mm512_mask_storeu_ps(&C[i * ldC], masks[0], C_buffer[i][0]);
+      _mm512_mask_storeu_ps(&C[i * ldC + 16], masks[1], C_buffer[i][1]);
+      _mm512_mask_storeu_ps(&C[i * ldC + 32], masks[2], C_buffer[i][2]);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      _mm512_storeu_ps(&C[i * N], C_buffer[i][0]);
-      _mm512_storeu_ps(&C[i * N + 16], C_buffer[i][1]);
-      _mm512_storeu_ps(&C[i * N + 32], C_buffer[i][2]);
+      _mm512_storeu_ps(&C[i * ldC], C_buffer[i][0]);
+      _mm512_storeu_ps(&C[i * ldC + 16], C_buffer[i][1]);
+      _mm512_storeu_ps(&C[i * ldC + 32], C_buffer[i][2]);
     }
   }
 }
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
   memset(C, 0, M * N * sizeof(float));
-  float *padded_blockA = (float *)_mm_malloc(sizeof(float) * MR * K, MEM_ALIGN);
-  float *padded_blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
+  float *blockA = (float *)_mm_malloc(sizeof(float) * K * MC, MEM_ALIGN);
+  float *blockB = (float *)_mm_malloc(sizeof(float) * K * NC, MEM_ALIGN);
 
-  for (int j = 0; j < N; j += NR) {
-    const int n = min(NR, N - j);
-    maybe_pad_blockB(&B[j], padded_blockB, n, N, K);
-    for (int i = 0; i < M; i += MR) {
-      const int m = min(MR, M - i);
-      maybe_pad_blockA(&A[i * K], padded_blockA, m, M, K);
-      kernel_6x16(padded_blockA, padded_blockB, &C[i * N + j], m, n, M, N, K);
+  for (int j = 0; j < N; j += NC) {
+    const int nc = min(NC, N - j);
+    pad_blockB(&B[j], blockB, nc, N, K);
+    for (int i = 0; i < M; i += MC) {
+      const int mc = min(MC, M - i);
+      pad_blockA(&A[i * K], blockA, mc, M, K);
+
+      // Iterate over each (MR, NR) tile
+      for (int jr = 0; jr < nc; jr += NR) {
+        for (int ir = 0; ir < mc; ir += MR) {
+          const int nr = min(NR, nc - jr);
+          const int mr = min(MR, mc - ir);
+          kernel_6x16(&blockA[ir * K], &blockB[jr * K], &C[(i + ir) * N + (j + jr)], mr, nr, K, N);
+        }
+      }
     }
   }
 }
