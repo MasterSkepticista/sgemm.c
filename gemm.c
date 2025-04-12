@@ -33,14 +33,20 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MC 120
 #define NC 64
 
-void pad_blockA(const float *A, float *blockA, int mc, int M, int K) {
-  memcpy(blockA, A, sizeof(float) * mc * K);                  // Copy valid rows
-  memset(blockA + mc * K, 0, sizeof(float) * (MC - mc) * K);  // Zero pad
+void pad_blockA(const float *A, float *blockA, int mc, int M, int ldA) {
+  for (int ir = 0; ir < mc; ir += MR) {
+    const int m = min(MR, mc - ir);
+    for (int i = 0; i < MR; i++) {
+      for (int p = 0; p < ldA; p++) {
+        blockA[(i + ir) * ldA + p] = (i < m) ? A[(i + ir) * ldA + p] : 0.0f;
+      }
+    }
+  }
 }
 
-void pad_blockB(const float *B, float *blockB, int nc, int N, int K) {
+void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
   for (int p = 0; p < K; p++) {
-    memcpy(blockB, &B[p * N], nc * sizeof(float));
+    memcpy(blockB, &B[p * ldB], nc * sizeof(float));
     memset(blockB + nc, 0, sizeof(float) * (NC - nc));
     blockB += NC;
   }
@@ -134,16 +140,16 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
   float *blockA = (float *)_mm_malloc(sizeof(float) * MC * K, MEM_ALIGN);
   float *blockB = (float *)_mm_malloc(sizeof(float) * K * NC, MEM_ALIGN);
 
-  for (int j = 0; j < N; j += NC) {
-    const int nc = min(NC, N - j);
-    pad_blockB(&B[j], blockB, nc, N, K);
-    for (int i = 0; i < M; i += MC) {
-      const int mc = min(MC, M - i);
-      pad_blockA(&A[i * K], blockA, mc, M, K);
+  for (int i = 0; i < M; i += MC) {
+    const int mc = min(MC, M - i);
+    pad_blockA(&A[i * K], blockA, mc, M, K);
+    for (int j = 0; j < N; j += NC) {
+      const int nc = min(NC, N - j);
+      pad_blockB(&B[j], blockB, nc, N, K);
 
       // Iterate over each MRxNR tile.
-      for (int jr = 0; jr < nc; jr += NR) {
-        for (int ir = 0; ir < mc; ir += MR) {
+      for (int ir = 0; ir < mc; ir += MR) {
+        for (int jr = 0; jr < nc; jr += NR) {
           const int nr = min(NR, nc - jr);
           const int mr = min(MR, mc - ir);
           kernel_6x16(&blockA[ir * K], &blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, 0, K, K, NC, N);
