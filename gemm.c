@@ -36,9 +36,9 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 void pad_blockA(const float *A, float *blockA, int mc, int M, int ldA) {
   for (int ir = 0; ir < mc; ir += MR) {
     const int m = min(MR, mc - ir);
-    for (int i = 0; i < MR; i++) {
-      for (int p = 0; p < ldA; p++) {
-        blockA[(i + ir) * ldA + p] = (i < m) ? A[(i + ir) * ldA + p] : 0.0f;
+    for (int p = 0; p < ldA; p++) {
+      for (int i = 0; i < MR; i++) {
+        blockA[ir * ldA + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
       }
     }
   }
@@ -69,8 +69,7 @@ void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
  * @param ldB: Leading dimension of blockB (or, number of columns in blockB).
  * @param ldC: Leading dimension of C (or, number of columns in C).
  */
-void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int l, int r, int ldA, int ldB,
-                 int ldC) {
+void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int K, int ldA, int ldB, int ldC) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
   __m256 C_buffer[MR][NR / 8];
@@ -95,33 +94,35 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
   }
 
   // Compute partial gemm on entire padded (MR, K) @ (K, NR).
-  for (int p = l; p < r; p++) {
+  for (int p = 0; p < K; p++) {
     b0_vec = _mm256_load_ps(&blockB[p * ldB]);
     b1_vec = _mm256_load_ps(&blockB[p * ldB + 8]);
 
-    a_vec = _mm256_broadcast_ss(&blockA[0 * ldA + p]);
+    a_vec = _mm256_broadcast_ss(blockA + 0);
     C_buffer[0][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
     C_buffer[0][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[0][1]);
 
-    a_vec = _mm256_broadcast_ss(&blockA[1 * ldA + p]);
+    a_vec = _mm256_broadcast_ss(blockA + 1);
     C_buffer[1][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[1][0]);
     C_buffer[1][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[1][1]);
 
-    a_vec = _mm256_broadcast_ss(&blockA[2 * ldA + p]);
+    a_vec = _mm256_broadcast_ss(blockA + 2);
     C_buffer[2][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[2][0]);
     C_buffer[2][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[2][1]);
 
-    a_vec = _mm256_broadcast_ss(&blockA[3 * ldA + p]);
+    a_vec = _mm256_broadcast_ss(blockA + 3);
     C_buffer[3][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[3][0]);
     C_buffer[3][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[3][1]);
 
-    a_vec = _mm256_broadcast_ss(&blockA[4 * ldA + p]);
+    a_vec = _mm256_broadcast_ss(blockA + 4);
     C_buffer[4][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[4][0]);
     C_buffer[4][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[4][1]);
 
-    a_vec = _mm256_broadcast_ss(&blockA[5 * ldA + p]);
+    a_vec = _mm256_broadcast_ss(blockA + 5);
     C_buffer[5][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[5][0]);
     C_buffer[5][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
+
+    blockA += MR;
   }
 
   // Store.
@@ -140,7 +141,7 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
   memset(C, 0, M * N * sizeof(float));
-  float *blockA = (float *)_mm_malloc(sizeof(float) * MC * K, MEM_ALIGN);
+  float *blockA = (float *)_mm_malloc(sizeof(float) * K * MC, MEM_ALIGN);
   float *blockB = (float *)_mm_malloc(sizeof(float) * K * NC, MEM_ALIGN);
 
   for (int i = 0; i < M; i += MC) {
@@ -155,7 +156,7 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
         for (int jr = 0; jr < nc; jr += NR) {
           const int nr = min(NR, nc - jr);
           const int mr = min(MR, mc - ir);
-          kernel_6x16(&blockA[ir * K], &blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, 0, K, K, NC, N);
+          kernel_6x16(&blockA[ir * K], &blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, K, K, NC, N);
         }
       }
     }
