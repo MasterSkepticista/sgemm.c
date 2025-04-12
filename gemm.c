@@ -49,7 +49,7 @@ void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
     const int n = min(NR, nc - jr);
     for (int p = 0; p < K; p++) {
       for (int j = 0; j < NR; j++) {
-        blockB[p * NC + (jr + j)] = (j < n) ? B[p * K + (jr + j)] : 0.0f;
+        blockB[jr * K + p * NR + j] = (j < n) ? B[p * K + (jr + j)] : 0.0f;
       }
     }
   }
@@ -69,7 +69,7 @@ void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
  * @param ldB: Leading dimension of blockB (or, number of columns in blockB).
  * @param ldC: Leading dimension of C (or, number of columns in C).
  */
-void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int K, int ldA, int ldB, int ldC) {
+void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int K, int ldC) {
   __m256 a_vec;
   __m256 b0_vec, b1_vec;
   __m256 C_buffer[MR][NR / 8];
@@ -95,8 +95,8 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
 
   // Compute partial gemm on entire padded (MR, K) @ (K, NR).
   for (int p = 0; p < K; p++) {
-    b0_vec = _mm256_load_ps(&blockB[p * ldB]);
-    b1_vec = _mm256_load_ps(&blockB[p * ldB + 8]);
+    b0_vec = _mm256_load_ps(blockB);
+    b1_vec = _mm256_load_ps(blockB + 8);
 
     a_vec = _mm256_broadcast_ss(blockA + 0);
     C_buffer[0][0] = _mm256_fmadd_ps(a_vec, b0_vec, C_buffer[0][0]);
@@ -123,6 +123,7 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
     C_buffer[5][1] = _mm256_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
 
     blockA += MR;
+    blockB += NR;
   }
 
   // Store.
@@ -156,7 +157,7 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
         for (int jr = 0; jr < nc; jr += NR) {
           const int nr = min(NR, nc - jr);
           const int mr = min(MR, mc - ir);
-          kernel_6x16(&blockA[ir * K], &blockB[jr], &C[(i + ir) * N + (j + jr)], mr, nr, K, K, NC, N);
+          kernel_6x16(&blockA[ir * K], &blockB[jr * K], &C[(i + ir) * N + (j + jr)], mr, nr, K, N);
         }
       }
     }
