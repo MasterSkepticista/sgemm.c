@@ -17,7 +17,6 @@
  */
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
-#pragma omp parallel for
   for (int i = 0; i < M; i++) {
     for (int k = 0; k < K; k++) {
       for (int j = 0; j < N; j++) {
@@ -30,26 +29,27 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 6
 #define NR 48
 
-#define MC 60
+#define MC 480
 #define NC 480
+#define KC 480
 
-void pad_blockA(const float *A, float *blockA, int mc, int M, int ldA) {
+void pad_blockA(const float *A, float *blockA, int mc, int kc, int ldA) {
   for (int ir = 0; ir < mc; ir += MR) {
     const int m = min(MR, mc - ir);
-    for (int p = 0; p < ldA; p++) {
+    for (int p = 0; p < kc; p++) {
       for (int i = 0; i < MR; i++) {
-        blockA[ir * ldA + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
+        blockA[ir * kc + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
       }
     }
   }
 }
 
-void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
+void pad_blockB(const float *B, float *blockB, int nc, int kc, int ldB) {
   for (int jr = 0; jr < nc; jr += NR) {
     const int n = min(NR, nc - jr);
-    for (int p = 0; p < K; p++) {
+    for (int p = 0; p < kc; p++) {
       for (int j = 0; j < NR; j++) {
-        blockB[jr * K + p * NR + j] = (j < n) ? B[p * K + (jr + j)] : 0.0f;
+        blockB[jr * kc + p * NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
       }
     }
   }
@@ -58,7 +58,7 @@ void pad_blockB(const float *B, float *blockB, int nc, int ldB, int K) {
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
-void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int K, int ldC) {
+void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int k, int ldC) {
   __m512 a_vec;
   __m512 b0_vec, b1_vec, b2_vec;
   __m512 C_buffer[MR][NR / 16];
@@ -83,7 +83,7 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
   }
 
   // Compute.
-  for (int p = 0; p < K; p++) {
+  for (int p = 0; p < k; p++) {
     b0_vec = _mm512_load_ps(blockB);
     b1_vec = _mm512_load_ps(blockB + 16);
     b2_vec = _mm512_load_ps(blockB + 32);
@@ -140,22 +140,25 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
 
 void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
   memset(C, 0, M * N * sizeof(float));
-  float *blockA = (float *)_mm_malloc(sizeof(float) * K * MC, MEM_ALIGN);
-  float *blockB = (float *)_mm_malloc(sizeof(float) * K * NC, MEM_ALIGN);
+  float *blockA = (float *)_mm_malloc(sizeof(float) * KC * MC, MEM_ALIGN);
+  float *blockB = (float *)_mm_malloc(sizeof(float) * KC * NC, MEM_ALIGN);
 
-  for (int j = 0; j < N; j += NC) {
-    const int nc = min(NC, N - j);
-    pad_blockB(&B[j], blockB, nc, N, K);
-    for (int i = 0; i < M; i += MC) {
-      const int mc = min(MC, M - i);
-      pad_blockA(&A[i * K], blockA, mc, M, K);
+  for (int i = 0; i < M; i += MC) {
+    const int mc = min(MC, M - i);
+    for (int p = 0; p < K; p += KC) {
+      const int kc = min(KC, K - p);
+      pad_blockA(&A[i * K + p], blockA, mc, kc, K);
+      for (int j = 0; j < N; j += NC) {
+        const int nc = min(NC, N - j);
+        pad_blockB(&B[p * N + j], blockB, nc, kc, N);
 
-      // Iterate over each (MR, NR) tile
-      for (int jr = 0; jr < nc; jr += NR) {
-        for (int ir = 0; ir < mc; ir += MR) {
-          const int nr = min(NR, nc - jr);
-          const int mr = min(MR, mc - ir);
-          kernel_6x16(&blockA[ir * K], &blockB[jr * K], &C[(i + ir) * N + (j + jr)], mr, nr, K, N);
+        // Iterate over each (MR, NR) tile
+        for (int jr = 0; jr < nc; jr += NR) {
+          for (int ir = 0; ir < mc; ir += MR) {
+            const int nr = min(NR, nc - jr);
+            const int mr = min(MR, mc - ir);
+            kernel_6x16(&blockA[ir * kc], &blockB[jr * kc], &C[(i + ir) * N + (j + jr)], mr, nr, kc, N);
+          }
         }
       }
     }
