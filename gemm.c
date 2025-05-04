@@ -17,7 +17,6 @@
  */
 void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   constant_init(C, M * N, 0.0f);
-#pragma omp parallel for
   for (int i = 0; i < M; i++) {
     for (int k = 0; k < K; k++) {
       for (int j = 0; j < N; j++) {
@@ -31,7 +30,7 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define NR 16
 
 #define MC 480
-#define NC 64
+#define NC 128
 #define KC 480
 
 void pad_blockA(const float *A, float *blockA, int mc, int kc, int ldA) {
@@ -203,8 +202,10 @@ int main(int argc, char **argv) {
   // Ground truth.
   gemm_naive(A, B, C, M, N, K);
 
-  // Benchmark
-  int repeats = 4;
+  // Warmup
+  gemm(A, B, C, M, N, K);
+
+  int repeats = 2;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
