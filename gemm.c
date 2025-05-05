@@ -26,11 +26,11 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
   }
 }
 
-#define MR 6
+#define MR 8
 #define NR 48
 
-#define MC 480
-#define NC 480
+#define MC 512
+#define NC NR * 256
 #define KC 480
 
 void pad_blockA(const float *A, float *blockA, int mc, int kc, int ldA) {
@@ -118,6 +118,16 @@ void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int 
     C_buffer[5][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[5][1]);
     C_buffer[5][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[5][2]);
 
+    a_vec = _mm512_set1_ps(*(blockA + 6));
+    C_buffer[6][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[6][0]);
+    C_buffer[6][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[6][1]);
+    C_buffer[6][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[6][2]);
+
+    a_vec = _mm512_set1_ps(*(blockA + 7));
+    C_buffer[7][0] = _mm512_fmadd_ps(a_vec, b0_vec, C_buffer[7][0]);
+    C_buffer[7][1] = _mm512_fmadd_ps(a_vec, b1_vec, C_buffer[7][1]);
+    C_buffer[7][2] = _mm512_fmadd_ps(a_vec, b2_vec, C_buffer[7][2]);
+
     blockA += MR;
     blockB += NR;
   }
@@ -143,14 +153,14 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
   float *blockA = (float *)_mm_malloc(sizeof(float) * KC * MC, MEM_ALIGN);
   float *blockB = (float *)_mm_malloc(sizeof(float) * KC * NC, MEM_ALIGN);
 
-  for (int i = 0; i < M; i += MC) {
-    const int mc = min(MC, M - i);
+  for (int j = 0; j < N; j += NC) {
+    const int nc = min(NC, N - j);
     for (int p = 0; p < K; p += KC) {
       const int kc = min(KC, K - p);
-      pad_blockA(&A[i * K + p], blockA, mc, kc, K);
-      for (int j = 0; j < N; j += NC) {
-        const int nc = min(NC, N - j);
-        pad_blockB(&B[p * N + j], blockB, nc, kc, N);
+      pad_blockB(&B[p * N + j], blockB, nc, kc, N);
+      for (int i = 0; i < M; i += MC) {
+        const int mc = min(MC, M - i);
+        pad_blockA(&A[i * K + p], blockA, mc, kc, K);
 
         // Iterate over each (MR, NR) tile
         for (int jr = 0; jr < nc; jr += NR) {
@@ -199,10 +209,11 @@ int main(int argc, char **argv) {
   constant_init(val, M * N, 0.0f);
 
   // Ground truth.
-  gemm_naive(A, B, C, M, N, K);
+  // gemm_naive(A, B, C, M, N, K);
+  gemm(A, B, C, M, N, K);
 
   // Benchmark
-  int repeats = 4;
+  int repeats = 2;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
