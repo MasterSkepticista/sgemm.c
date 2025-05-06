@@ -208,18 +208,18 @@ int main(int argc, char **argv) {
   constant_init(C, M * N, 0.0f);
   constant_init(val, M * N, 0.0f);
 
-  // Ground truth.
-  // gemm_naive(A, B, C, M, N, K);
-  gemm(A, B, C, M, N, K);
+  // Check correctness.
+  gemm_naive(A, B, C, M, N, K);
+  gemm(A, B, val, M, N, K);
+  allclose(val, C, M * N, 1e-3f);
 
   // Benchmark
-  int repeats = 2;
+  int repeats = 4;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
     gemm(A, B, val, M, N, K);
     double stop = tick();
-    allclose(val, C, M * N, 1e-3f);
     double elapsed_time = (stop - start);
     double gflops = (2.0 * K * M * N * 1e-6f) / elapsed_time;
     total_gflops += gflops;

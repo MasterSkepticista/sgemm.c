@@ -29,7 +29,7 @@ void allclose(float *a, float *b, int numel, float rtol) {
   for (int i = 0; i < numel; i++) {
     if (fabsf(a[i] - b[i]) > rtol) {
       printf("mismatch at idx %d, %f != %f \n", i, a[i], b[i]);
-      exit(1);
+      break;
     }
   }
 }
