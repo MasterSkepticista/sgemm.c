@@ -29,11 +29,12 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 8
 #define NR 48
 
-#define MC 512
-#define NC NR * 256
-#define KC 480
+#define MC 1024
+#define NC 24576
+#define KC 960
 
 void pad_blockA(const float *A, float *blockA, int mc, int kc, int ldA) {
+  #pragma omp parallel for
   for (int ir = 0; ir < mc; ir += MR) {
     const int m = min(MR, mc - ir);
     for (int p = 0; p < kc; p++) {
@@ -45,6 +46,7 @@ void pad_blockA(const float *A, float *blockA, int mc, int kc, int ldA) {
 }
 
 void pad_blockB(const float *B, float *blockB, int nc, int kc, int ldB) {
+  #pragma omp parallel for
   for (int jr = 0; jr < nc; jr += NR) {
     const int n = min(NR, nc - jr);
     for (int p = 0; p < kc; p++) {
@@ -163,6 +165,7 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
         pad_blockA(&A[i * K + p], blockA, mc, kc, K);
 
         // Iterate over each (MR, NR) tile
+        #pragma omp parallel for
         for (int jr = 0; jr < nc; jr += NR) {
           for (int ir = 0; ir < mc; ir += MR) {
             const int nr = min(NR, nc - jr);
@@ -214,7 +217,7 @@ int main(int argc, char **argv) {
   allclose(val, C, M * N, 1e-3f);
 
   // Benchmark
-  int repeats = 4;
+  int repeats = 40;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
@@ -223,9 +226,9 @@ int main(int argc, char **argv) {
     double elapsed_time = (stop - start);
     double gflops = (2.0 * K * M * N * 1e-6f) / elapsed_time;
     total_gflops += gflops;
+    printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, gflops);
   }
   double average_gflops = total_gflops / repeats;
-  printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, average_gflops);
 
   _mm_free(A);
   _mm_free(B);
