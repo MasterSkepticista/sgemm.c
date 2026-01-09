@@ -1,5 +1,5 @@
 /**
- * Optimizing SGEMM in C (Row-major layout).
+ * Optimizing SGEMM in C using AVX-512 (Row-major layout).
  * clang -O2 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
@@ -29,9 +29,17 @@ void gemm_naive(const float *A, const float *B, float *C, int M, int N, int K) {
 #define MR 8
 #define NR 48
 
-#define MC 1024
-#define NC 24576
-#define KC 960
+#ifndef MC
+#define MC 1920
+#endif
+
+#ifndef NC
+#define NC 768
+#endif
+
+#ifndef KC
+#define KC 1920
+#endif
 
 void pad_blockA(const float *A, float *blockA, int mc, int kc, int ldA) {
   #pragma omp parallel for
@@ -60,7 +68,7 @@ void pad_blockB(const float *B, float *blockB, int nc, int kc, int ldB) {
 /**
  * An MR x NR micro-kernel to compute a tile of C and update in-place in C.
  */
-void kernel_6x16(const float *blockA, const float *blockB, float *C, int m, int n, int k, int ldC) {
+void kernel_8x48(const float *blockA, const float *blockB, float *C, int m, int n, int k, int ldC) {
   __m512 a_vec;
   __m512 b0_vec, b1_vec, b2_vec;
   __m512 C_buffer[MR][NR / 16];
@@ -170,7 +178,7 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
           for (int ir = 0; ir < mc; ir += MR) {
             const int nr = min(NR, nc - jr);
             const int mr = min(MR, mc - ir);
-            kernel_6x16(&blockA[ir * kc], &blockB[jr * kc], &C[(i + ir) * N + (j + jr)], mr, nr, kc, N);
+            kernel_8x48(&blockA[ir * kc], &blockB[jr * kc], &C[(i + ir) * N + (j + jr)], mr, nr, kc, N);
           }
         }
       }
@@ -180,12 +188,12 @@ void gemm(const float *A, const float *B, float *C, int M, int N, int K) {
 
 int main(int argc, char **argv) {
   /**
-   * Xeon 6258R
+   * Xeon 8488C
    * 2 AVX-512 FMA units
    * = 2 * 16 * 2 = 64 FLOP/cycle
-   * = 2.5 * 64 = 160 GFLOP/s at 2.5GHz
+   * = 2.4 * 64 = 154 GFLOPS at 2.4GHz
    *
-   * Equivalently, 80 GFLOP/s using AVX-256
+   * Equivalently, 77 GFLOPS using AVX-256
    */
   int M, N, K;
   if (argc > 3) {
@@ -217,7 +225,7 @@ int main(int argc, char **argv) {
   allclose(val, C, M * N, 1e-3f);
 
   // Benchmark
-  int repeats = 40;
+  int repeats = 3;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
@@ -226,9 +234,9 @@ int main(int argc, char **argv) {
     double elapsed_time = (stop - start);
     double gflops = (2.0 * K * M * N * 1e-6f) / elapsed_time;
     total_gflops += gflops;
-    printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, gflops);
   }
   double average_gflops = total_gflops / repeats;
+  printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, average_gflops);
 
   _mm_free(A);
   _mm_free(B);
