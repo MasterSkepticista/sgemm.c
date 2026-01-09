@@ -9,7 +9,7 @@ np.random.seed(42)
 A = np.random.randn(N, N).astype(np.float32)
 B = np.random.randn(N, N).astype(np.float32)
 
-for i in range(2):
+for i in range(4):
   t0 = time.monotonic()
   C = A @ B
   dt = (time.monotonic() - t0) * 1e9
