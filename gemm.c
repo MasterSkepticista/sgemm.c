@@ -3,7 +3,6 @@
  * clang -O2 -march=native gemm.c -o ./gemm && ./gemm 1024
  */
 #include <immintrin.h>
-#include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
