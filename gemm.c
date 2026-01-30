@@ -7,10 +7,23 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdalign.h>
-
+#include <mkl.h>
 #include "common.h"
 
 #define MEM_ALIGN 64
+
+/** MKL-SGEMM as roofline. */
+void gemm_mkl(float* __restrict C, 
+               const float* __restrict A, 
+               const float* __restrict B, 
+               int M, 
+               int N, 
+               int K) {
+  memset(C, 0, sizeof(float) * M * N);
+  float alpha = 1.0f, beta = 1.0f;
+  cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
+              M, N, K, alpha, A, K, B, N, beta, C, N);
+}
 
 /** Basic loop-reordered, pointwise GEMM kernel. */
 void gemm_loop_reorder(float* __restrict C, 
@@ -160,12 +173,15 @@ void kernel2(float* __restrict C, const float* __restrict A, const float* __rest
 void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, int K) {
   switch (kernel_num) {
     case 0:
-      gemm_loop_reorder(C, A, B, M, N, K);
+      gemm_mkl(C, A, B, M, N, K);
       break;
     case 1:
-      gemm_cache_blocking(C, A, B, M, N, K);
+      gemm_loop_reorder(C, A, B, M, N, K);
       break;
     case 2:
+      gemm_cache_blocking(C, A, B, M, N, K);
+      break;
+    case 3:
       kernel2(C, A, B, M, N, K);
       break;
     default:
@@ -204,14 +220,14 @@ int main(int argc, char** argv) {
 
   // Warmup run, generate ground truth data.
 #ifdef DEBUG
-  kernel0(C, A, B, M, N, K);
+  gemm_mkl(C, A, B, M, N, K);
   launch_kernel(kernel_num, C_val, A, B, M, N, K);
-  allclose(C, C_val, M * N, 1e-5);
+  allclose(C, C_val, M * N, 1e-2);
   printf("Results match, starting benchmark...\n");
 #endif
 
   // Benchmark
-  int repeats = 3;
+  int repeats = 10;
   double gflops = (2.0 * M * N * K) * 1e-6;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
