@@ -71,7 +71,7 @@ void gemm_cache_blocking(float* __restrict C, const float* __restrict A, const f
   }
 }
 
-#define MR 8
+#define MR 6
 #define NR 8
 
 void gemm_6x8(float* C, float* blockA, float* blockB, int m, int n, int k, int ldC) {
@@ -227,7 +227,8 @@ int main(int argc, char** argv) {
 #endif
 
   // Benchmark
-  int repeats = 10;
+  int repeats = 4;
+  launch_kernel(kernel_num, C_val, A, B, M, N, K); // Warmup
   double gflops = (2.0 * M * N * K) * 1e-6;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
