@@ -43,12 +43,12 @@ void gemm_loop_reorder(float* __restrict C,
 }
 
 /** Cache-blocking across dimensions. */
-#define TILE_K 64
+#define TILE_K 128
 #define TILE_N 2048
 #define TILE_M 1024
 
 void gemm_cache_blocking(float* __restrict C, const float* __restrict A, const float* __restrict B, int M, int N, int K) {
-  constant_init(C, M * N, 0.0f);
+  memset(C, 0, sizeof(float) * M * N);
 
   // Tile across each dimension
   for (int i = 0; i < M; i += TILE_M) {
@@ -74,7 +74,7 @@ void gemm_cache_blocking(float* __restrict C, const float* __restrict A, const f
 #define MR 6
 #define NR 8
 
-void gemm_6x8(float* C, float* blockA, float* blockB, int m, int n, int k, int ldC) {
+void micro_gemm(float* C, float* blockA, float* blockB, int m, int n, int k, int ldC) {
   __m256 a, b;
   __m256 c[MR];
 	__m256i mask;
@@ -154,8 +154,8 @@ void pad_blockB(const float *B, float *blockB, int nr, int K, int ldB) {
   }
 }
 
-void kernel2(float* __restrict C, const float* __restrict A, const float* __restrict B, int M, int N, int K) {
-  constant_init(C, M * N, 0.0f);
+void gemm_outer_product(float* __restrict C, const float* __restrict A, const float* __restrict B, int M, int N, int K) {
+  memset(C, 0, sizeof(float) * M * N);
   float *blockA = (float *)_mm_malloc(sizeof(float) * K * MR, MEM_ALIGN);
   float *blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
 
@@ -165,7 +165,7 @@ void kernel2(float* __restrict C, const float* __restrict A, const float* __rest
     for (int i = 0; i < M; i += MR) {
       const int mr = min(MR, M - i);
       pad_blockA(&A[i * K], blockA, mr, K);
-      gemm_6x8(&C[i * N + j], blockA, blockB, mr, nr, K, N);
+      micro_gemm(&C[i * N + j], blockA, blockB, mr, nr, K, N);
     }
   }
 }
@@ -182,7 +182,7 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
       gemm_cache_blocking(C, A, B, M, N, K);
       break;
     case 3:
-      kernel2(C, A, B, M, N, K);
+      gemm_outer_product(C, A, B, M, N, K);
       break;
     default:
       printf("Invalid kernel number `%d`\n", kernel_num);
