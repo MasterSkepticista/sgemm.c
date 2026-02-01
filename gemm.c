@@ -240,7 +240,7 @@ int main(int argc, char** argv) {
   // Benchmark
   int repeats = 4;
   launch_kernel(kernel_num, C_val, A, B, M, N, K); // Warmup
-  double gflops = (2.0 * M * N * K) * 1e-6;
+  double gflops = (2.0 * M * N * K) * 1e-9;
   double total_gflops = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();

@@ -10,7 +10,7 @@
 double tick() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
-  return (ts.tv_sec + ts.tv_nsec / 1e9) * 1e3;
+  return (ts.tv_sec + ts.tv_nsec / 1e9);
 }
 
 void print_matrix(float *m, int rows, int cols) {
