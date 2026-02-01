@@ -47,7 +47,12 @@ void gemm_loop_reorder(float* __restrict C,
 #define TILE_N 2048
 #define TILE_M 1024
 
-void gemm_cache_blocking(float* __restrict C, const float* __restrict A, const float* __restrict B, int M, int N, int K) {
+void gemm_cache_blocking(float* __restrict C, 
+                          const float* __restrict A, 
+                          const float* __restrict B, 
+                          int M, 
+                          int N, 
+                          int K) {
   memset(C, 0, sizeof(float) * M * N);
 
   // Tile across each dimension
@@ -74,7 +79,13 @@ void gemm_cache_blocking(float* __restrict C, const float* __restrict A, const f
 #define MR 6
 #define NR 8
 
-void micro_gemm(float* C, float* blockA, float* blockB, int m, int n, int k, int ldC) {
+void micro_gemm(float* C, 
+                const float* __restrict blockA, 
+                const float* __restrict blockB, 
+                int m, 
+                int n, 
+                int k, 
+                int ldC) {
   __m256 a, b;
   __m256 c[MR];
 	__m256i mask;
