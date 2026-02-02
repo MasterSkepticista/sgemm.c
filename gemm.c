@@ -20,7 +20,7 @@ void gemm_mkl(float* __restrict C,
                int N, 
                int K) {
   memset(C, 0, sizeof(float) * M * N);
-  float alpha = 1.0f, beta = 1.0f;
+  float alpha = 1.0f, beta = 0.0f;
   cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
               M, N, K, alpha, A, K, B, N, beta, C, N);
 }
@@ -233,7 +233,7 @@ int main(int argc, char** argv) {
 #ifdef DEBUG
   gemm_mkl(C, A, B, M, N, K);
   launch_kernel(kernel_num, C_val, A, B, M, N, K);
-  allclose(C, C_val, M * N, 1e-2);
+  allclose(C, C_val, M * N, 1e-5);
   printf("Results match, starting benchmark...\n");
 #endif
 
@@ -241,15 +241,15 @@ int main(int argc, char** argv) {
   int repeats = 4;
   launch_kernel(kernel_num, C_val, A, B, M, N, K); // Warmup
   double gflops = (2.0 * M * N * K) * 1e-9;
-  double total_gflops = 0.0;
+  double total_time = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
     launch_kernel(kernel_num, C_val, A, B, M, N, K);
     double stop = tick();
     double elapsed_time = stop - start;
-    total_gflops += gflops / elapsed_time;
+    total_time += elapsed_time;
   }
-  printf("[M=%4d, N=%4d, K=%4d] GFLOP/s: %.2f\n", M, N, K, total_gflops / repeats);
+  printf("[M=%4d, N=%4d, K=%4d] GFLOP/s: %.2f\n", M, N, K, gflops / (total_time / repeats));
 
   _mm_free(A);
   _mm_free(B);
