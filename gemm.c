@@ -209,8 +209,8 @@ int main(int argc, char** argv) {
   if (argc > 4) {
     kernel_num = atoi(argv[1]);
     M = atoi(argv[2]);
-    N = atoi(argv[3]);
-    K = atoi(argv[4]);
+    K = atoi(argv[3]);
+    N = atoi(argv[4]);
   } else if (argc > 2) {
     kernel_num = atoi(argv[1]);
     M = N = K = atoi(argv[2]);
@@ -252,7 +252,7 @@ int main(int argc, char** argv) {
     double elapsed_time = stop - start;
     total_time += elapsed_time;
   }
-  printf("[M = %4d, N = %4d, K = %4d] GFLOP/s: %.2f\n", M, N, K, gflops / (total_time / repeats));
+  printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, gflops / (total_time / repeats));
 
   _mm_free(A);
   _mm_free(B);
