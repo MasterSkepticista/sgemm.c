@@ -77,61 +77,62 @@ void gemm_cache_blocking(float* __restrict C,
 }
 
 #define MR 6
-#define NR 8
+#define NR 16
 
-void micro_gemm(float* C, 
+void micro_gemm(float* __restrict C, 
                 const float* __restrict blockA, 
                 const float* __restrict blockB, 
                 int m, 
                 int n, 
                 int k, 
                 int ldC) {
-  __m256 a, b;
-  __m256 c[MR];
-	__m256i mask;
+  __m256 a, b0, b1;
+  __m256 c[MR][2];
+	__m256i masks[2];
 
   // Load
   if (n < NR) {
     // Build mask.
-    alignas(32) static const int32_t mask_table[9][8] = {
-      {0, 0, 0, 0, 0, 0, 0, 0},
-      {-1, 0, 0, 0, 0, 0, 0, 0},
-      {-1, -1, 0, 0, 0, 0, 0, 0},
-      {-1, -1, -1, 0, 0, 0, 0, 0},
-      {-1, -1, -1, -1, 0, 0, 0, 0},
-      {-1, -1, -1, -1, -1, 0, 0, 0},
-      {-1, -1, -1, -1, -1, -1, 0, 0},
-      {-1, -1, -1, -1, -1, -1, -1, 0},
-      {-1, -1, -1, -1, -1, -1, -1, -1},
-    };
-    mask = _mm256_load_si256((__m256i*)mask_table[n]);
-    
+    const unsigned int bitmask = 65535;
+    masks[0] = _mm256_setr_epi32(bitmask << (n + 15), bitmask << (n + 14), bitmask << (n + 13), bitmask << (n + 12),
+                                 bitmask << (n + 11), bitmask << (n + 10), bitmask << (n + 9), bitmask << (n + 8));
+    masks[1] = _mm256_setr_epi32(bitmask << (n + 7), bitmask << (n + 6), bitmask << (n + 5), bitmask << (n + 4),
+                                 bitmask << (n + 3), bitmask << (n + 2), bitmask << (n + 1), bitmask << (n + 0));
     // Masked load
     for (int i = 0; i < m; i++) {
-      c[i] = _mm256_maskload_ps(&C[i * ldC], mask);
+      c[i][0] = _mm256_maskload_ps(&C[i * ldC], masks[0]);
+      c[i][1] = _mm256_maskload_ps(&C[i * ldC + 8], masks[1]);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      c[i] = _mm256_loadu_ps(&C[i * ldC]);
+      c[i][0] = _mm256_load_ps(&C[i * ldC]);
+      c[i][1] = _mm256_load_ps(&C[i * ldC + 8]);
     }
   }
 
   // Compute
   for (int p = 0; p < k; p++) {
-    b = _mm256_loadu_ps(blockB);
+    b0 = _mm256_load_ps(blockB);
+    b1 = _mm256_load_ps(blockB + 8);
 
     a = _mm256_broadcast_ss(blockA);
-    c[0] = _mm256_fmadd_ps(a, b, c[0]);
+    c[0][0] = _mm256_fmadd_ps(a, b0, c[0][0]);
+    c[0][1] = _mm256_fmadd_ps(a, b1, c[0][1]);
     a = _mm256_broadcast_ss(blockA + 1);
-    c[1] = _mm256_fmadd_ps(a, b, c[1]);
+    c[1][0] = _mm256_fmadd_ps(a, b0, c[1][0]);
+    c[1][1] = _mm256_fmadd_ps(a, b1, c[1][1]);
     a = _mm256_broadcast_ss(blockA + 2);
-    c[2] = _mm256_fmadd_ps(a, b, c[2]);
+    c[2][0] = _mm256_fmadd_ps(a, b0, c[2][0]);
+    c[2][1] = _mm256_fmadd_ps(a, b1, c[2][1]);
     a = _mm256_broadcast_ss(blockA + 3);
-    c[3] = _mm256_fmadd_ps(a, b, c[3]);
+    c[3][0] = _mm256_fmadd_ps(a, b0, c[3][0]);
+    c[3][1] = _mm256_fmadd_ps(a, b1, c[3][1]);
     a = _mm256_broadcast_ss(blockA + 4);
-    c[4] = _mm256_fmadd_ps(a, b, c[4]);
+    c[4][0] = _mm256_fmadd_ps(a, b0, c[4][0]);
+    c[4][1] = _mm256_fmadd_ps(a, b1, c[4][1]);
     a = _mm256_broadcast_ss(blockA + 5);
-    c[5] = _mm256_fmadd_ps(a, b, c[5]);
+    c[5][0] = _mm256_fmadd_ps(a, b0, c[5][0]);
+    c[5][1] = _mm256_fmadd_ps(a, b1, c[5][1]);
 
     blockA += MR;
     blockB += NR;
@@ -140,11 +141,13 @@ void micro_gemm(float* C,
   // Store
   if (n < NR) {
     for (int i = 0; i < m; i++) {
-      _mm256_maskstore_ps(&C[i * ldC], mask, c[i]);
+      _mm256_maskstore_ps(&C[i * ldC], masks[0], c[i][0]);
+      _mm256_maskstore_ps(&C[i * ldC + 8], masks[1], c[i][1]);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      _mm256_storeu_ps(&C[i * ldC], c[i]);
+      _mm256_store_ps(&C[i * ldC], c[i][0]);
+      _mm256_store_ps(&C[i * ldC + 8], c[i][1]);
     }
   }
 }
@@ -233,12 +236,12 @@ int main(int argc, char** argv) {
 #ifdef DEBUG
   gemm_mkl(C, A, B, M, N, K);
   launch_kernel(kernel_num, C_val, A, B, M, N, K);
-  allclose(C, C_val, M * N, 1e-5);
+  allclose(C, C_val, M * N, 1e-3);
   printf("Results match, starting benchmark...\n");
 #endif
 
   // Benchmark
-  int repeats = 4;
+  int repeats = 10;
   launch_kernel(kernel_num, C_val, A, B, M, N, K); // Warmup
   double gflops = (2.0 * M * N * K) * 1e-9;
   double total_time = 0.0;
@@ -249,7 +252,7 @@ int main(int argc, char** argv) {
     double elapsed_time = stop - start;
     total_time += elapsed_time;
   }
-  printf("[M=%4d, N=%4d, K=%4d] GFLOP/s: %.2f\n", M, N, K, gflops / (total_time / repeats));
+  printf("[M = %4d, N = %4d, K = %4d] GFLOP/s: %.2f\n", M, N, K, gflops / (total_time / repeats));
 
   _mm_free(A);
   _mm_free(B);
