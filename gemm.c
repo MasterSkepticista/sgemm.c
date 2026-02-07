@@ -19,7 +19,6 @@ void gemm_mkl(float* __restrict C,
                int M, 
                int N, 
                int K) {
-  memset(C, 0, sizeof(float) * M * N);
   float alpha = 1.0f, beta = 0.0f;
   cblas_sgemm(CblasRowMajor, CblasNoTrans, CblasNoTrans,
               M, N, K, alpha, A, K, B, N, beta, C, N);
@@ -32,7 +31,6 @@ void gemm_loop_reorder(float* __restrict C,
                         int M, 
                         int N, 
                         int K) {
-  memset(C, 0, M * N * sizeof(float));
   for (int i = 0; i < M; i++) {
     for (int k = 0; k < K; k++) {
       for (int j = 0; j < N; j++) {
@@ -43,25 +41,23 @@ void gemm_loop_reorder(float* __restrict C,
 }
 
 /** Cache-blocking across dimensions. */
-#define TILE_K 128
-#define TILE_N 2048
-#define TILE_M 1024
+#define KC 128
+#define NC 2048
+#define MC 1024
 
-void gemm_cache_blocking(float* __restrict C, 
+void gemm_cache_blocked(float* __restrict C, 
                           const float* __restrict A, 
                           const float* __restrict B, 
                           int M, 
                           int N, 
                           int K) {
-  memset(C, 0, sizeof(float) * M * N);
-
   // Tile across each dimension
-  for (int i = 0; i < M; i += TILE_M) {
-    const int mc = min(TILE_M, M - i);
-    for (int k = 0; k < K; k += TILE_K) {
-      const int kc = min(TILE_K, K - k);
-      for (int j = 0; j < N; j += TILE_N) {
-        const int nc = min(TILE_N, N - j);
+  for (int i = 0; i < M; i += MC) {
+    const int mc = min(MC, M - i);
+    for (int k = 0; k < K; k += KC) {
+      const int kc = min(KC, K - k);
+      for (int j = 0; j < N; j += NC) {
+        const int nc = min(NC, N - j);
 
         // Update partials on each tile
         for (int ir = 0; ir < mc; ir++) {
@@ -168,8 +164,13 @@ void pad_blockB(const float *B, float *blockB, int nr, int K, int ldB) {
   }
 }
 
-void gemm_outer_product(float* __restrict C, const float* __restrict A, const float* __restrict B, int M, int N, int K) {
-  memset(C, 0, sizeof(float) * M * N);
+void gemm_outer_product(float* __restrict C, 
+                        const float* __restrict A, 
+                        const float* __restrict B, 
+                        int M, 
+                        int N, 
+                        int K) {
+
   float *blockA = (float *)_mm_malloc(sizeof(float) * K * MR, MEM_ALIGN);
   float *blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
 
@@ -193,7 +194,7 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
       gemm_loop_reorder(C, A, B, M, N, K);
       break;
     case 2:
-      gemm_cache_blocking(C, A, B, M, N, K);
+      gemm_cache_blocked(C, A, B, M, N, K);
       break;
     case 3:
       gemm_outer_product(C, A, B, M, N, K);
@@ -246,6 +247,7 @@ int main(int argc, char** argv) {
   double gflops = (2.0 * M * N * K) * 1e-9;
   double total_time = 0.0;
   for (int i = 0; i < repeats; i++) {
+    memset(C_val, 0, sizeof(float) * M * N);
     double start = tick();
     launch_kernel(kernel_num, C_val, A, B, M, N, K);
     double stop = tick();
