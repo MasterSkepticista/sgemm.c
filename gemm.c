@@ -101,8 +101,8 @@ void micro_gemm(float* __restrict C,
     }
   } else {
     for (int i = 0; i < m; i++) {
-      c[i][0] = _mm256_load_ps(&C[i * ldC]);
-      c[i][1] = _mm256_load_ps(&C[i * ldC + 8]);
+      c[i][0] = _mm256_loadu_ps(&C[i * ldC]);
+      c[i][1] = _mm256_loadu_ps(&C[i * ldC + 8]);
     }
   }
 
@@ -142,8 +142,8 @@ void micro_gemm(float* __restrict C,
     }
   } else {
     for (int i = 0; i < m; i++) {
-      _mm256_store_ps(&C[i * ldC], c[i][0]);
-      _mm256_store_ps(&C[i * ldC + 8], c[i][1]);
+      _mm256_storeu_ps(&C[i * ldC], c[i][0]);
+      _mm256_storeu_ps(&C[i * ldC + 8], c[i][1]);
     }
   }
 }
