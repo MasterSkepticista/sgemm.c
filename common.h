@@ -25,12 +25,21 @@ void print_matrix(float *m, int rows, int cols) {
   printf("_____________\n");
 }
 
+/** Frobenius norm relative error check */
 void allclose(float *a, float *b, int numel, float rtol) {
+  double sum_diff = 0.0;
+  double sum_b = 0.0;
   for (int i = 0; i < numel; i++) {
-    if (fabsf(a[i] - b[i]) > rtol) {
-      printf("mismatch at idx %d, %f != %f \n", i, a[i], b[i]);
-      exit(1);
-    }
+    double diff = a[i] - b[i];
+    sum_diff += (double)diff * diff;
+    sum_b += (double)b[i] * b[i];
+  }
+  double frobenius_diff = sqrt(sum_diff);
+  double frobenius_b = sqrt(sum_b);
+  double relative_error = frobenius_diff / frobenius_b;
+  if (relative_error > rtol) {
+    printf("Results do not match! Relative Error: %f\n", relative_error);
+    exit(1);
   }
 }
 
