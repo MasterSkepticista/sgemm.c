@@ -41,9 +41,9 @@ void gemm_loop_reorder(float* __restrict C,
 }
 
 /** Cache-blocking across dimensions. */
-#define KC 128
-#define NC 2048
-#define MC 1024
+#define KC 16 * 256
+#define NC 128
+#define MC 6 * 256
 
 void gemm_cache_blocked(float* __restrict C, 
                           const float* __restrict A, 
@@ -72,6 +72,7 @@ void gemm_cache_blocked(float* __restrict C,
   }
 }
 
+/** Outer Product on MRxNR tiles */
 #define MR 6
 #define NR 16
 
@@ -166,6 +167,7 @@ void pad_blockB(const float *B, float *blockB, int nr, int K, int ldB) {
   }
 }
 
+/** Outer Product without Cache-Blocking. */
 void gemm_outer_product(float* __restrict C, 
                         const float* __restrict A, 
                         const float* __restrict B, 
@@ -187,6 +189,69 @@ void gemm_outer_product(float* __restrict C,
   }
 }
 
+/** Outer Product with Cache-Blocking. */
+static float blockA[KC * MC] __attribute__((aligned(64)));
+static float blockB[KC * NC] __attribute__((aligned(64)));
+
+void pack_tileA(float * __restrict blockA, 
+                const float * __restrict A, 
+                int mc, 
+                int kc, 
+                int ldA) {
+  for (int ir = 0; ir < mc; ir += MR) {
+    const int m = min(MR, mc - ir);
+    for (int p = 0; p < kc; p++) {
+      for (int i = 0; i < MR; i++) {
+        blockA[ir * kc + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
+      }
+    }
+  }
+}
+
+void pack_tileB(float * __restrict blockB,
+                const float * __restrict B,
+                int nc,
+                int kc,
+                int ldB) {
+  for (int jr = 0; jr < nc; jr += NR) {
+    const int n = min(NR, nc - jr);
+    for (int p = 0; p < kc; p++) {
+      for (int j = 0; j < NR; j++) {
+        blockB[jr * kc + p * NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
+      }
+    }
+  }
+}
+
+void gemm_outer_product_cache_blocking(float * __restrict C, 
+                                      const float * __restrict A, 
+                                      const float * __restrict B, 
+                                      int M, 
+                                      int N, 
+                                      int K) {
+  for (int i = 0; i < M; i += MC) {
+    const int mc = min(MC, M - i);
+    for (int p = 0; p < K; p += KC) {
+      const int kc = min(KC, K - p);
+      pack_tileA(blockA, &A[i * K + p], mc, kc, K);
+      for (int j = 0; j < N; j += NC) {
+        const int nc = min(NC, N - j);
+        pack_tileB(blockB, &B[p * N + j], nc, kc, N);
+        for (int ir = 0; ir < mc; ir += MR) {
+          for (int jr = 0; jr < nc; jr += NR) {
+            const int mr = min(MR, mc - ir);
+            const int nr = min(NR, nc - jr);
+            micro_gemm(&C[(i + ir) * N + (j + jr)], 
+                       &blockA[ir * kc], 
+                       &blockB[jr * kc], 
+                       mr, nr, kc, N);
+          }
+        }
+      }
+    }
+  }
+}
+
 void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, int K) {
   switch (kernel_num) {
     case 0:
@@ -200,6 +265,9 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
       break;
     case 3:
       gemm_outer_product(C, A, B, M, N, K);
+      break;
+    case 4:
+      gemm_outer_product_cache_blocking(C, A, B, M, N, K);
       break;
     default:
       printf("Invalid kernel number `%d`\n", kernel_num);
@@ -244,7 +312,7 @@ int main(int argc, char** argv) {
 #endif
 
   // Benchmark
-  int repeats = 10;
+  int repeats = (2048 / M) > 2 ? (2048 / M) : 2;
   launch_kernel(kernel_num, C_val, A, B, M, N, K); // Warmup
   double gflops = (2.0 * M * N * K) * 1e-9;
   double total_time = 0.0;
