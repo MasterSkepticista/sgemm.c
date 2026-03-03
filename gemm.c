@@ -12,7 +12,7 @@
 
 #define MEM_ALIGN 64
 
-/** MKL-SGEMM as roofline. */
+/** 0. MKL-SGEMM as roofline. */
 void gemm_mkl(float* __restrict C, 
                const float* __restrict A, 
                const float* __restrict B, 
@@ -24,7 +24,7 @@ void gemm_mkl(float* __restrict C,
               M, N, K, alpha, A, K, B, N, beta, C, N);
 }
 
-/** Basic loop-reordered, pointwise GEMM kernel. */
+/** 1. Basic loop-reordered, pointwise GEMM kernel. */
 void gemm_loop_reorder(float* __restrict C, 
                         const float* __restrict A, 
                         const float* __restrict B, 
@@ -40,10 +40,10 @@ void gemm_loop_reorder(float* __restrict C,
   }
 }
 
-/** Cache-blocking across dimensions. */
-#define KC 16 * 256
-#define NC 128
-#define MC 6 * 256
+/** 2. Cache-blocking across dimensions. */
+#define TK 128
+#define TN 2048
+#define TM 1024
 
 void gemm_cache_blocked(float* __restrict C, 
                           const float* __restrict A, 
@@ -52,12 +52,12 @@ void gemm_cache_blocked(float* __restrict C,
                           int N, 
                           int K) {
   // Tile across each dimension
-  for (int i = 0; i < M; i += MC) {
-    const int mc = min(MC, M - i);
-    for (int k = 0; k < K; k += KC) {
-      const int kc = min(KC, K - k);
-      for (int j = 0; j < N; j += NC) {
-        const int nc = min(NC, N - j);
+  for (int i = 0; i < M; i += TM) {
+    const int mc = min(TM, M - i);
+    for (int k = 0; k < K; k += TK) {
+      const int kc = min(TK, K - k);
+      for (int j = 0; j < N; j += TN) {
+        const int nc = min(TN, N - j);
 
         // Update partials on each tile
         for (int ir = 0; ir < mc; ir++) {
@@ -167,7 +167,7 @@ void pad_blockB(const float *B, float *blockB, int nr, int K, int ldB) {
   }
 }
 
-/** Outer Product without Cache-Blocking. */
+/** 3. Outer Product without Cache-Blocking. */
 void gemm_outer_product(float* __restrict C, 
                         const float* __restrict A, 
                         const float* __restrict B, 
@@ -189,7 +189,11 @@ void gemm_outer_product(float* __restrict C,
   }
 }
 
-/** Outer Product with Cache-Blocking. */
+/** 4. Outer Product with Cache-Blocking. */
+#define KC 2048
+#define NC 128
+#define MC 1024
+
 static float blockA[KC * MC] __attribute__((aligned(64)));
 static float blockB[KC * NC] __attribute__((aligned(64)));
 
