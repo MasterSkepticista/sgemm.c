@@ -316,12 +316,10 @@ int main(int argc, char** argv) {
 #endif
 
   // Benchmark
-  int repeats = (2048 / M) > 2 ? (2048 / M) : 2;
-  launch_kernel(kernel_num, C_val, A, B, M, N, K); // Warmup
   double gflops = (2.0 * M * N * K) * 1e-9;
   double total_time = 0.0;
+  int repeats = (int)ceil(100.0 / gflops);
   for (int i = 0; i < repeats; i++) {
-    memset(C_val, 0, sizeof(float) * M * N);
     double start = tick();
     launch_kernel(kernel_num, C_val, A, B, M, N, K);
     double stop = tick();
