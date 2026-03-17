@@ -256,6 +256,148 @@ void gemm_outer_product_cache_blocking(float * __restrict C,
   }
 }
 
+/** 5. 512-bit intrinsics for tiled outer product */
+#define Z_MR 8
+#define Z_NR 48
+
+#define Z_MC Z_MR * 256
+#define Z_KC Z_MR * 256
+#define Z_NC 48
+
+static float z_blockA[Z_KC * Z_MC] __attribute__((aligned(64)));
+static float z_blockB[Z_KC * Z_NC] __attribute__((aligned(64)));
+
+void z_pack_tileA(float * __restrict blockA, 
+                const float * __restrict A, 
+                int mc, 
+                int kc, 
+                int ldA) {
+  for (int ir = 0; ir < mc; ir += Z_MR) {
+    const int m = min(Z_MR, mc - ir);
+    for (int p = 0; p < kc; p++) {
+      for (int i = 0; i < Z_MR; i++) {
+        blockA[ir * kc + p * Z_MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
+      }
+    }
+  }
+}
+
+void z_pack_tileB(float * __restrict blockB,
+                const float * __restrict B,
+                int nc,
+                int kc,
+                int ldB) {
+  for (int jr = 0; jr < nc; jr += Z_NR) {
+    const int n = min(Z_NR, nc - jr);
+    for (int p = 0; p < kc; p++) {
+      for (int j = 0; j < Z_NR; j++) {
+        blockB[jr * kc + p * Z_NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
+      }
+    }
+  }
+}
+
+static inline int clamp16(int n) {
+  if (n <= 0) return 0;
+  if (n >= 16) return 16;
+  return n;
+}
+
+void micro_gemm_512(float* __restrict C, 
+                const float* __restrict blockA, 
+                const float* __restrict blockB, 
+                int m, 
+                int n, 
+                int k, 
+                int ldC) {
+  __m512 a, b0, b1, b2;
+  __m512 c[Z_MR][3] = {};
+	__mmask16 masks[3];
+
+  // Load
+  if (n < Z_NR) {
+    // Build mask.
+    masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
+    masks[1] = _cvtu32_mask16((1 << clamp16(n - 16)) - 1);
+    masks[2] = _cvtu32_mask16((1 << clamp16(n - 32)) - 1);
+
+    // Masked load
+    for (int i = 0; i < m; i++) {
+      c[i][0] = _mm512_maskz_loadu_ps(masks[0], &C[i * ldC]);
+      c[i][1] = _mm512_maskz_loadu_ps(masks[1], &C[i * ldC + 16]);
+      c[i][2] = _mm512_maskz_loadu_ps(masks[2], &C[i * ldC + 32]);
+    }
+  } else {
+    for (int i = 0; i < m; i++) {
+      c[i][0] = _mm512_loadu_ps(&C[i * ldC]);
+      c[i][1] = _mm512_loadu_ps(&C[i * ldC + 16]);
+      c[i][1] = _mm512_loadu_ps(&C[i * ldC + 32]);
+    }
+  }
+
+  // Compute
+  for (int p = 0; p < k; p++) {
+    b0 = _mm512_load_ps(blockB);
+    b1 = _mm512_load_ps(blockB + 16);
+    b2 = _mm512_load_ps(blockB + 32);
+
+    #pragma unroll
+    for (int i = 0; i < Z_MR; i++) {
+      a = _mm512_set1_ps(blockA[i]);
+      c[i][0] = _mm512_fmadd_ps(a, b0, c[i][0]);
+      c[i][1] = _mm512_fmadd_ps(a, b1, c[i][1]);
+      c[i][2] = _mm512_fmadd_ps(a, b2, c[i][2]);
+    }
+
+    blockA += Z_MR;
+    blockB += Z_NR;
+  }
+
+  // Store
+  if (n < Z_NR) {
+    for (int i = 0; i < m; i++) {
+      _mm512_mask_store_ps(&C[i * ldC], masks[0], c[i][0]);
+      _mm512_mask_store_ps(&C[i * ldC + 16], masks[1], c[i][1]);
+      _mm512_mask_store_ps(&C[i * ldC + 32], masks[2], c[i][2]);
+    }
+  } else {
+    for (int i = 0; i < m; i++) {
+      _mm512_storeu_ps(&C[i * ldC], c[i][0]);
+      _mm512_storeu_ps(&C[i * ldC + 16], c[i][1]);
+      _mm512_storeu_ps(&C[i * ldC + 32], c[i][2]);
+    }
+  }
+}
+
+void gemm_outer_product_cache_blocking_512(float * __restrict C, 
+                                      const float * __restrict A, 
+                                      const float * __restrict B, 
+                                      int M, 
+                                      int N, 
+                                      int K) {
+  for (int i = 0; i < M; i += Z_MC) {
+    const int mc = min(Z_MC, M - i);
+    for (int p = 0; p < K; p += Z_KC) {
+      const int kc = min(Z_KC, K - p);
+      z_pack_tileA(z_blockA, &A[i * K + p], mc, kc, K);
+      for (int j = 0; j < N; j += Z_NC) {
+        const int nc = min(Z_NC, N - j);
+        z_pack_tileB(z_blockB, &B[p * N + j], nc, kc, N);
+        for (int ir = 0; ir < mc; ir += Z_MR) {
+          for (int jr = 0; jr < nc; jr += Z_NR) {
+            const int mr = min(Z_MR, mc - ir);
+            const int nr = min(Z_NR, nc - jr);
+            micro_gemm_512(&C[(i + ir) * N + (j + jr)], 
+                       &z_blockA[ir * kc], 
+                       &z_blockB[jr * kc], 
+                       mr, nr, kc, N);
+          }
+        }
+      }
+    }
+  }
+}
+
 void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, int K) {
   switch (kernel_num) {
     case 0:
@@ -272,6 +414,9 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
       break;
     case 4:
       gemm_outer_product_cache_blocking(C, A, B, M, N, K);
+      break;
+    case 5:
+      gemm_outer_product_cache_blocking_512(C, A, B, M, N, K);
       break;
     default:
       printf("Invalid kernel number `%d`\n", kernel_num);
