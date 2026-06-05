@@ -274,9 +274,17 @@ void z_pack_tileA(float * __restrict blockA,
                 int ldA) {
   for (int ir = 0; ir < mc; ir += Z_MR) {
     const int m = min(Z_MR, mc - ir);
-    for (int p = 0; p < kc; p++) {
-      for (int i = 0; i < Z_MR; i++) {
-        blockA[ir * kc + p * Z_MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
+    if (m == Z_MR) {
+      for (int p = 0; p < kc; p++) {
+        for (int i = 0; i < Z_MR; i++) {
+          blockA[ir * kc + p * Z_MR + i] = A[(ir + i) * ldA + p];
+        }
+      }
+    } else {
+      for (int p = 0; p < kc; p++) {
+        for (int i = 0; i < Z_MR; i++) {
+          blockA[ir * kc + p * Z_MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
+        }
       }
     }
   }
@@ -289,9 +297,17 @@ void z_pack_tileB(float * __restrict blockB,
                 int ldB) {
   for (int jr = 0; jr < nc; jr += Z_NR) {
     const int n = min(Z_NR, nc - jr);
-    for (int p = 0; p < kc; p++) {
-      for (int j = 0; j < Z_NR; j++) {
-        blockB[jr * kc + p * Z_NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
+    if (n == Z_NR) {
+      for (int p = 0; p < kc; p++) {
+        for (int j = 0; j < Z_NR; j++) {
+          blockB[jr * kc + p * Z_NR + j] = B[p * ldB + (jr + j)];
+        }
+      }
+    } else {
+      for (int p = 0; p < kc; p++) {
+        for (int j = 0; j < Z_NR; j++) {
+          blockB[jr * kc + p * Z_NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
+        }
       }
     }
   }
