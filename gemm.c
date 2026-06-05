@@ -331,7 +331,7 @@ void micro_gemm_512(float* __restrict C,
     for (int i = 0; i < m; i++) {
       c[i][0] = _mm512_loadu_ps(&C[i * ldC]);
       c[i][1] = _mm512_loadu_ps(&C[i * ldC + 16]);
-      c[i][1] = _mm512_loadu_ps(&C[i * ldC + 32]);
+      c[i][2] = _mm512_loadu_ps(&C[i * ldC + 32]);
     }
   }
 
