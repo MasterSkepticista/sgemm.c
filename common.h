@@ -7,13 +7,13 @@
 
 #define min(a, b) ((a) < (b) ? (a) : (b))
 
-double tick() {
+static inline double tick() {
   struct timespec ts;
   clock_gettime(CLOCK_MONOTONIC, &ts);
   return (ts.tv_sec + ts.tv_nsec / 1e9);
 }
 
-void print_matrix(float *m, int rows, int cols) {
+static inline void print_matrix(float *m, int rows, int cols) {
   printf("_____________\n");
   for (int i = 0; i < rows; i++) {
     printf("[");
@@ -26,7 +26,7 @@ void print_matrix(float *m, int rows, int cols) {
 }
 
 /** Frobenius norm relative error check */
-void allclose(float *a, float *b, int numel, float rtol) {
+static inline void allclose(float *a, float *b, int numel, float rtol) {
   double sum_diff = 0.0;
   double sum_b = 0.0;
   for (int i = 0; i < numel; i++) {
@@ -43,13 +43,13 @@ void allclose(float *a, float *b, int numel, float rtol) {
   }
 }
 
-void rand_init(float *m, int numel) {
+static inline void rand_init(float *m, int numel) {
   for (int i = 0; i < numel; i++) {
     m[i] = (float)rand() / (float)RAND_MAX;
   }
 }
 
-void constant_init(float *m, int numel, float val) {
+static inline void constant_init(float *m, int numel, float val) {
   for (int i = 0; i < numel; i++) {
     m[i] = val;
   }

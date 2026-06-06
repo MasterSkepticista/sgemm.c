@@ -1,0 +1,126 @@
+#include <immintrin.h>
+
+#include "../common.h"
+#include "variants.h"
+
+#define MEM_ALIGN 64
+
+/** Outer Product on MRxNR tiles */
+#define MR 6
+#define NR 16
+
+static const int8_t mask[32]  __attribute__((aligned(64))) = 
+  {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
+    0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0};
+
+static void micro_gemm(float* __restrict C, 
+                const float* __restrict blockA, 
+                const float* __restrict blockB, 
+                int m, 
+                int n, 
+                int k, 
+                int ldC) {
+  __m256 a, b0, b1;
+  __m256 c[MR][2];
+	__m256i masks[2];
+
+  // Load
+  if (n < NR) {
+    // Build mask.
+    masks[0] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n]));
+    masks[1] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n + 8]));
+
+    // Masked load
+    for (int i = 0; i < m; i++) {
+      c[i][0] = _mm256_maskload_ps(&C[i * ldC], masks[0]);
+      c[i][1] = _mm256_maskload_ps(&C[i * ldC + 8], masks[1]);
+    }
+  } else {
+    for (int i = 0; i < m; i++) {
+      c[i][0] = _mm256_loadu_ps(&C[i * ldC]);
+      c[i][1] = _mm256_loadu_ps(&C[i * ldC + 8]);
+    }
+  }
+
+  // Compute
+  for (int p = 0; p < k; p++) {
+    b0 = _mm256_load_ps(blockB);
+    b1 = _mm256_load_ps(blockB + 8);
+
+    a = _mm256_broadcast_ss(blockA);
+    c[0][0] = _mm256_fmadd_ps(a, b0, c[0][0]);
+    c[0][1] = _mm256_fmadd_ps(a, b1, c[0][1]);
+    a = _mm256_broadcast_ss(blockA + 1);
+    c[1][0] = _mm256_fmadd_ps(a, b0, c[1][0]);
+    c[1][1] = _mm256_fmadd_ps(a, b1, c[1][1]);
+    a = _mm256_broadcast_ss(blockA + 2);
+    c[2][0] = _mm256_fmadd_ps(a, b0, c[2][0]);
+    c[2][1] = _mm256_fmadd_ps(a, b1, c[2][1]);
+    a = _mm256_broadcast_ss(blockA + 3);
+    c[3][0] = _mm256_fmadd_ps(a, b0, c[3][0]);
+    c[3][1] = _mm256_fmadd_ps(a, b1, c[3][1]);
+    a = _mm256_broadcast_ss(blockA + 4);
+    c[4][0] = _mm256_fmadd_ps(a, b0, c[4][0]);
+    c[4][1] = _mm256_fmadd_ps(a, b1, c[4][1]);
+    a = _mm256_broadcast_ss(blockA + 5);
+    c[5][0] = _mm256_fmadd_ps(a, b0, c[5][0]);
+    c[5][1] = _mm256_fmadd_ps(a, b1, c[5][1]);
+
+    blockA += MR;
+    blockB += NR;
+  }
+
+  // Store
+  if (n < NR) {
+    for (int i = 0; i < m; i++) {
+      _mm256_maskstore_ps(&C[i * ldC], masks[0], c[i][0]);
+      _mm256_maskstore_ps(&C[i * ldC + 8], masks[1], c[i][1]);
+    }
+  } else {
+    for (int i = 0; i < m; i++) {
+      _mm256_storeu_ps(&C[i * ldC], c[i][0]);
+      _mm256_storeu_ps(&C[i * ldC + 8], c[i][1]);
+    }
+  }
+}
+
+static void pad_blockA(const float *A, float *blockA, int mr, int K) {
+  for (int p = 0; p < K; p++) {
+    for (int i = 0; i < MR; i++) {
+      blockA[p * MR + i] = (i < mr) ? A[i * K + p] : 0.0f;
+    }
+  }
+}
+
+static void pad_blockB(const float *B, float *blockB, int nr, int K, int ldB) {
+  for (int p = 0; p < K; p++) {
+    for (int j = 0; j < NR; j++) {
+      blockB[p * NR + j] = (j < nr) ? B[p * ldB + j] : 0.0f;
+    }
+  }
+}
+
+/** 3. Outer Product without Cache-Blocking. */
+void gemm_outer_product(float* __restrict C, 
+                        const float* __restrict A, 
+                        const float* __restrict B, 
+                        int M, 
+                        int N, 
+                        int K) {
+
+  float *blockA = (float *)_mm_malloc(sizeof(float) * K * MR, MEM_ALIGN);
+  float *blockB = (float *)_mm_malloc(sizeof(float) * K * NR, MEM_ALIGN);
+
+  for (int j = 0; j < N; j += NR) {
+    const int nr = min(NR, N - j);
+    pad_blockB(&B[j], blockB, nr, K, N);
+    for (int i = 0; i < M; i += MR) {
+      const int mr = min(MR, M - i);
+      pad_blockA(&A[i * K], blockA, mr, K);
+      micro_gemm(&C[i * N + j], blockA, blockB, mr, nr, K, N);
+    }
+  }
+
+  _mm_free(blockA);
+  _mm_free(blockB);
+}
