@@ -15,46 +15,30 @@ static float blockA[KC * MC] __attribute__((aligned(64)));
 static float blockB[KC * NC] __attribute__((aligned(64)));
 
 static void pack_tileA(float * __restrict blockA, 
-                const float * __restrict A, 
-                int mc, 
-                int kc, 
-                int ldA) {
+                        const float * __restrict A, 
+                        int mc, 
+                        int kc, 
+                        int ldA) {
   for (int ir = 0; ir < mc; ir += MR) {
     const int m = min(MR, mc - ir);
-    if (m == MR) {
-      for (int p = 0; p < kc; p++) {
-        for (int i = 0; i < MR; i++) {
-          blockA[ir * kc + p * MR + i] = A[(ir + i) * ldA + p];
-        }
-      }
-    } else {
-      for (int p = 0; p < kc; p++) {
-        for (int i = 0; i < MR; i++) {
-          blockA[ir * kc + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
-        }
+    for (int p = 0; p < kc; p++) {
+      for (int i = 0; i < MR; i++) {
+        blockA[ir * kc + p * MR + i] = (i < m) ? A[(ir + i) * ldA + p] : 0.0f;
       }
     }
   }
 }
 
 static void pack_tileB(float * __restrict blockB,
-                const float * __restrict B,
-                int nc,
-                int kc,
-                int ldB) {
+                        const float * __restrict B,
+                        int nc,
+                        int kc,
+                        int ldB) {
   for (int jr = 0; jr < nc; jr += NR) {
     const int n = min(NR, nc - jr);
-    if (n == NR) {
-      for (int p = 0; p < kc; p++) {
-        for (int j = 0; j < NR; j++) {
-          blockB[jr * kc + p * NR + j] = B[p * ldB + (jr + j)];
-        }
-      }
-    } else {
-      for (int p = 0; p < kc; p++) {
-        for (int j = 0; j < NR; j++) {
-          blockB[jr * kc + p * NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
-        }
+    for (int p = 0; p < kc; p++) {
+      for (int j = 0; j < NR; j++) {
+        blockB[jr * kc + p * NR + j] = (j < n) ? B[p * ldB + (jr + j)] : 0.0f;
       }
     }
   }
@@ -66,64 +50,13 @@ static inline int clamp16(int n) {
   return n;
 }
 
-static void micro_gemm_512_fs(float* __restrict C, 
-                const float* __restrict blockA, 
-                const float* __restrict blockB, 
-                int m, 
-                int n, 
-                int k, 
-                int ldC) {
-  __m512 a, b0, b1, b2;
-  __m512 c[MR][3] = {};
-  __mmask16 masks[3];
-
-  if (n < NR) {
-    masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
-    masks[1] = _cvtu32_mask16((1 << clamp16(n - 16)) - 1);
-    masks[2] = _cvtu32_mask16((1 << clamp16(n - 32)) - 1);
-  }
-
-  // Compute
-  for (int p = 0; p < k; p++) {
-    b0 = _mm512_load_ps(blockB);
-    b1 = _mm512_load_ps(blockB + 16);
-    b2 = _mm512_load_ps(blockB + 32);
-
-    #pragma unroll
-    for (int i = 0; i < MR; i++) {
-      a = _mm512_set1_ps(blockA[i]);
-      c[i][0] = _mm512_fmadd_ps(a, b0, c[i][0]);
-      c[i][1] = _mm512_fmadd_ps(a, b1, c[i][1]);
-      c[i][2] = _mm512_fmadd_ps(a, b2, c[i][2]);
-    }
-
-    blockA += MR;
-    blockB += NR;
-  }
-
-  // Store
-  if (n < NR) {
-    for (int i = 0; i < m; i++) {
-      _mm512_mask_store_ps(&C[i * ldC], masks[0], c[i][0]);
-      _mm512_mask_store_ps(&C[i * ldC + 16], masks[1], c[i][1]);
-      _mm512_mask_store_ps(&C[i * ldC + 32], masks[2], c[i][2]);
-    }
-  } else {
-    for (int i = 0; i < m; i++) {
-      _mm512_storeu_ps(&C[i * ldC], c[i][0]);
-      _mm512_storeu_ps(&C[i * ldC + 16], c[i][1]);
-      _mm512_storeu_ps(&C[i * ldC + 32], c[i][2]);
-    }
-  }
-}
-
-static void micro_gemm_512_lfs(float* __restrict C, 
-                const float* __restrict blockA, 
-                const float* __restrict blockB, 
-                int m, 
-                int n, 
-                int k, 
-                int ldC) {
+static void micro_gemm_512_8x48(float* __restrict C, 
+                                const float* __restrict blockA, 
+                                const float* __restrict blockB, 
+                                int m, 
+                                int n, 
+                                int k, 
+                                int ldC) {
   __m512 a, b0, b1, b2;
   __m512 c[MR][3] = {};
   __mmask16 masks[3];
@@ -199,17 +132,10 @@ void gemm_outer_product_cache_blocking_512(float * __restrict C,
           for (int jr = 0; jr < nc; jr += NR) {
             const int mr = min(MR, mc - ir);
             const int nr = min(NR, nc - jr);
-            if (p == 0) {
-              micro_gemm_512_fs(&C[(i + ir) * N + (j + jr)], 
-                         &blockA[ir * kc], 
-                         &blockB[jr * kc], 
-                         mr, nr, kc, N);
-            } else {
-              micro_gemm_512_lfs(&C[(i + ir) * N + (j + jr)], 
-                          &blockA[ir * kc], 
-                          &blockB[jr * kc], 
-                          mr, nr, kc, N);
-            }
+            micro_gemm_512_8x48(&C[(i + ir) * N + (j + jr)], 
+                                &blockA[ir * kc], 
+                                &blockB[jr * kc], 
+                                mr, nr, kc, N);
           }
         }
       }
