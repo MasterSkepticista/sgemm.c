@@ -3,9 +3,16 @@
 #include "../common.h"
 #include "variants.h"
 
-/** Outer Product on MRxNR tiles */
+/** 4. Outer Product with Cache-Blocking. */
 #define MR 6
 #define NR 16
+
+#define MC MR
+#define KC 512
+#define NC 512
+
+static float blockA[KC * MC] __attribute__((aligned(64)));
+static float blockB[KC * NC] __attribute__((aligned(64)));
 
 static const int8_t mask[32]  __attribute__((aligned(64))) = 
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
@@ -21,24 +28,6 @@ static void micro_gemm(float* __restrict C,
   __m256 a, b0, b1;
   __m256 c[MR][2];
 	__m256i masks[2];
-
-  // Load
-  if (n < NR) {
-    // Build mask.
-    masks[0] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n]));
-    masks[1] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n + 8]));
-
-    // Masked load
-    for (int i = 0; i < m; i++) {
-      c[i][0] = _mm256_maskload_ps(&C[i * ldC], masks[0]);
-      c[i][1] = _mm256_maskload_ps(&C[i * ldC + 8], masks[1]);
-    }
-  } else {
-    for (int i = 0; i < m; i++) {
-      c[i][0] = _mm256_loadu_ps(&C[i * ldC]);
-      c[i][1] = _mm256_loadu_ps(&C[i * ldC + 8]);
-    }
-  }
 
   // Compute
   for (int p = 0; p < k; p++) {
@@ -70,25 +59,26 @@ static void micro_gemm(float* __restrict C,
 
   // Store
   if (n < NR) {
+    // Build mask.
+    masks[0] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n]));
+    masks[1] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n + 8]));
+
+    // Masked load
     for (int i = 0; i < m; i++) {
+      c[i][0] += _mm256_maskload_ps(&C[i * ldC], masks[0]);
+      c[i][1] += _mm256_maskload_ps(&C[i * ldC + 8], masks[1]);
       _mm256_maskstore_ps(&C[i * ldC], masks[0], c[i][0]);
       _mm256_maskstore_ps(&C[i * ldC + 8], masks[1], c[i][1]);
     }
   } else {
     for (int i = 0; i < m; i++) {
+      c[i][0] += _mm256_loadu_ps(&C[i * ldC]);
+      c[i][1] += _mm256_loadu_ps(&C[i * ldC + 8]);
       _mm256_storeu_ps(&C[i * ldC], c[i][0]);
       _mm256_storeu_ps(&C[i * ldC + 8], c[i][1]);
     }
   }
 }
-
-/** 4. Outer Product with Cache-Blocking. */
-#define KC 2048
-#define NC 128
-#define MC 1024
-
-static float blockA[KC * MC] __attribute__((aligned(64)));
-static float blockB[KC * NC] __attribute__((aligned(64)));
 
 static void pack_tileA(float * __restrict blockA, 
                 const float * __restrict A, 
@@ -126,16 +116,16 @@ void gemm_outer_product_cache_blocking(float * __restrict C,
                                       int M, 
                                       int N, 
                                       int K) {
-  for (int i = 0; i < M; i += MC) {
-    const int mc = min(MC, M - i);
+  for (int j = 0; j < N; j += NC) {
+    const int nc = min(NC, N - j);
     for (int p = 0; p < K; p += KC) {
       const int kc = min(KC, K - p);
-      pack_tileA(blockA, &A[i * K + p], mc, kc, K);
-      for (int j = 0; j < N; j += NC) {
-        const int nc = min(NC, N - j);
-        pack_tileB(blockB, &B[p * N + j], nc, kc, N);
-        for (int ir = 0; ir < mc; ir += MR) {
+      pack_tileB(blockB, &B[p * N + j], nc, kc, N);
+      for (int i = 0; i < M; i += MC) {
+        const int mc = min(MC, M - i);
+        pack_tileA(blockA, &A[i * K + p], mc, kc, K);
           for (int jr = 0; jr < nc; jr += NR) {
+        for (int ir = 0; ir < mc; ir += MR) {
             const int mr = min(MR, mc - ir);
             const int nr = min(NR, nc - jr);
             micro_gemm(&C[(i + ir) * N + (j + jr)], 
