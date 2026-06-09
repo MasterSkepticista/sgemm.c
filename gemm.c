@@ -37,6 +37,27 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
   }
 }
 
+static double benchmark_kernel(int kernel_num,
+                               float* C,
+                               float* A,
+                               float* B,
+                               int M,
+                               int N,
+                               int K,
+                               int repeats) {
+  launch_kernel(kernel_num, C, A, B, M, N, K); // Warmup
+  double total_time = 0.0;
+  for (int i = 0; i < repeats; i++) {
+    double start = tick();
+    launch_kernel(kernel_num, C, A, B, M, N, K);
+    double stop = tick();
+    total_time += stop - start;
+  }
+
+  double gflops = (2.0 * M * N * K) * 1e-9;
+  return gflops / (total_time / repeats);
+}
+
 int main(int argc, char** argv) {
   int kernel_num, M, N, K;
   if (argc > 4) {
@@ -74,17 +95,26 @@ int main(int argc, char** argv) {
 #endif
 
   // Benchmark
-  double gflops = (2.0 * M * N * K) * 1e-9;
-  double total_time = 0.0;
-  int repeats = (int)ceil(100.0 / gflops);
-  for (int i = 0; i < repeats; i++) {
-    double start = tick();
-    launch_kernel(kernel_num, C_val, A, B, M, N, K);
-    double stop = tick();
-    double elapsed_time = stop - start;
-    total_time += elapsed_time;
+  double work_gflops = (2.0 * M * N * K) * 1e-9;
+  int repeats = (int)ceil(100.0 / work_gflops);
+
+  constant_init(C, M * N, 0.0f);
+  double mkl_gflops = benchmark_kernel(0, C, A, B, M, N, K, repeats);
+
+  if (kernel_num == 0) {
+    printf("[M = %4d, K = %4d, N = %4d] kernel 0 GFLOP/s: %.2f\n", M, K, N, mkl_gflops);
+  } else {
+    constant_init(C_val, M * N, 0.0f);
+    double kernel_gflops = benchmark_kernel(kernel_num, C_val, A, B, M, N, K, repeats);
+    printf("[M = %4d, K = %4d, N = %4d] kernel 0: %.2f GFLOP/s | kernel %d: %.2f GFLOP/s | factor: %.2f\n",
+           M,
+           K,
+           N,
+           mkl_gflops,
+           kernel_num,
+           kernel_gflops,
+           kernel_gflops / mkl_gflops);
   }
-  printf("[M = %4d, K = %4d, N = %4d] GFLOP/s: %.2f\n", M, K, N, gflops / (total_time / repeats));
 
   _mm_free(A);
   _mm_free(B);

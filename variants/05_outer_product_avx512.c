@@ -61,25 +61,6 @@ static void micro_gemm_512_8x48(float* __restrict C,
   __m512 c[MR][3] = {};
   __mmask16 masks[3];
 
-  // Load
-  if (n < NR) {
-    masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
-    masks[1] = _cvtu32_mask16((1 << clamp16(n - 16)) - 1);
-    masks[2] = _cvtu32_mask16((1 << clamp16(n - 32)) - 1);
-
-    for (int i = 0; i < m; i++) {
-      c[i][0] = _mm512_maskz_loadu_ps(masks[0], &C[i * ldC]);
-      c[i][1] = _mm512_maskz_loadu_ps(masks[1], &C[i * ldC + 16]);
-      c[i][2] = _mm512_maskz_loadu_ps(masks[2], &C[i * ldC + 32]);
-    }
-  } else {
-    for (int i = 0; i < m; i++) {
-      c[i][0] = _mm512_loadu_ps(&C[i * ldC]);
-      c[i][1] = _mm512_loadu_ps(&C[i * ldC + 16]);
-      c[i][2] = _mm512_loadu_ps(&C[i * ldC + 32]);
-    }
-  }
-
   // Compute
   for (int p = 0; p < k; p++) {
     b0 = _mm512_load_ps(blockB);
@@ -98,18 +79,38 @@ static void micro_gemm_512_8x48(float* __restrict C,
     blockB += NR;
   }
 
-  // Store
+  // Load, update and store fused
   if (n < NR) {
+    masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
+    masks[1] = _cvtu32_mask16((1 << clamp16(n - 16)) - 1);
+    masks[2] = _cvtu32_mask16((1 << clamp16(n - 32)) - 1);
+
     for (int i = 0; i < m; i++) {
-      _mm512_mask_store_ps(&C[i * ldC], masks[0], c[i][0]);
-      _mm512_mask_store_ps(&C[i * ldC + 16], masks[1], c[i][1]);
-      _mm512_mask_store_ps(&C[i * ldC + 32], masks[2], c[i][2]);
+      __m512 tmp0 = _mm512_maskz_loadu_ps(masks[0], &C[i * ldC]);
+      __m512 tmp1 = _mm512_maskz_loadu_ps(masks[1], &C[i * ldC + 16]);
+      __m512 tmp2 = _mm512_maskz_loadu_ps(masks[2], &C[i * ldC + 32]);
+
+      tmp0 = _mm512_add_ps(tmp0, c[i][0]);
+      tmp1 = _mm512_add_ps(tmp1, c[i][1]);
+      tmp2 = _mm512_add_ps(tmp2, c[i][2]);
+
+      _mm512_mask_store_ps(&C[i * ldC], masks[0], tmp0);
+      _mm512_mask_store_ps(&C[i * ldC + 16], masks[1], tmp1);
+      _mm512_mask_store_ps(&C[i * ldC + 32], masks[2], tmp2);
     }
   } else {
     for (int i = 0; i < m; i++) {
-      _mm512_storeu_ps(&C[i * ldC], c[i][0]);
-      _mm512_storeu_ps(&C[i * ldC + 16], c[i][1]);
-      _mm512_storeu_ps(&C[i * ldC + 32], c[i][2]);
+      __m512 tmp0 = _mm512_loadu_ps(&C[i * ldC]);
+      __m512 tmp1 = _mm512_loadu_ps(&C[i * ldC + 16]);
+      __m512 tmp2 = _mm512_loadu_ps(&C[i * ldC + 32]);
+
+      tmp0 = _mm512_add_ps(tmp0, c[i][0]);
+      tmp1 = _mm512_add_ps(tmp1, c[i][1]);
+      tmp2 = _mm512_add_ps(tmp2, c[i][2]);
+
+      _mm512_storeu_ps(&C[i * ldC], tmp0);
+      _mm512_storeu_ps(&C[i * ldC + 16], tmp1);
+      _mm512_storeu_ps(&C[i * ldC + 32], tmp2);
     }
   }
 }

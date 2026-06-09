@@ -7,9 +7,9 @@
 #define MR 6
 #define NR 16
 
-#define MC MR
+#define MC MR * 2
 #define KC 512
-#define NC 512
+#define NC 1024
 
 static float blockA[KC * MC] __attribute__((aligned(64)));
 static float blockB[KC * NC] __attribute__((aligned(64)));
@@ -26,7 +26,7 @@ static void micro_gemm(float* __restrict C,
                 int k, 
                 int ldC) {
   __m256 a, b0, b1;
-  __m256 c[MR][2];
+  __m256 c[MR][2] = {};
 	__m256i masks[2];
 
   // Compute
@@ -124,8 +124,8 @@ void gemm_outer_product_cache_blocking(float * __restrict C,
       for (int i = 0; i < M; i += MC) {
         const int mc = min(MC, M - i);
         pack_tileA(blockA, &A[i * K + p], mc, kc, K);
-          for (int jr = 0; jr < nc; jr += NR) {
-        for (int ir = 0; ir < mc; ir += MR) {
+        for (int jr = 0; jr < nc; jr += NR) {
+          for (int ir = 0; ir < mc; ir += MR) {
             const int mr = min(MR, mc - ir);
             const int nr = min(NR, nc - jr);
             micro_gemm(&C[(i + ir) * N + (j + jr)], 

@@ -1,25 +1,29 @@
 ## Optimizing SGEMM in C
 
-A single C file attempt to beat Intel MKL for the single precision GEMM operation.
+An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
 
 ### Prerequisites
 
-* Install Intel MKL headers and libraries in a python venv activated in the root of this project. We use this to compare roofline GFLOP/s and verify correctness.
-
+* Install OpenBLAS
   ```bash
-  pip install mkl mkl-include
+  sudo apt install libopenblas-dev
   ```
 
-* Compile.
+* Compile and run.
   ```bash
-  clang -O2 \
-    DEBUG=1 \
-    -march=native \
-    -I venv/include -l:libmkl_rt.so.2 -lm \
-    -L $(pwd)/venv/lib -Wl,-rpath,$(pwd)/venv/lib \
-    gemm.c -o ./gemm
+  DEBUG=1 ./build.sh && ./gemm <kernel_num> <size>
   ```
-  Run. Kernel number `0` refers to MKL reference sgemm implementation. This should give the peak GFLOP/s on your machine.
+  Kernel number `0` is the reference sgemm implementation (openBLAS). This should give the peak GFLOP/s on your machine.
+
+* Sweep benchmark.
   ```bash
-  ./gemm 0 1920
+  DEBUG=1 ./benchmark.sh <kernel_num>
   ```
+
+### Kernels
+* `0`: Reference OpenBLAS implementation.
+* `1`: Simple triple-for-loop with reordering.
+* `2`: Same as kernel `1`, but with cache-blocking for consistent performance across all sizes.
+* `3`: Reformulation of Matrix-Multiplication as a tiled outer product. More FLOP/s per byte moved.
+* `4`: Same as kernel `3`, but with cache-blocking. This kernel should come close to AVX-256 performance limit on your CPU. Calculate the peak manually. E.g. 2.5GHz * 32 FLOPs/cycle = 80GFLOP/s
+* `5`: Similar design to kernel `4`, but uses 512-bit wide AVX intrinsics, and requires a different tuning of constants. This kernel should come close to AVX-512 performance limit on your CPU (assume OpenBLAS to be the standard). In contrast, AVX-512 can do 64 FLOPs/cycle.
