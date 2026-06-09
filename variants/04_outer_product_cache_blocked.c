@@ -8,13 +8,13 @@
 #define NR 16
 
 #define MC MR * 2
-#define KC 512
-#define NC 1024
+#define KC 256
+#define NC 2048
 
-static float blockA[KC * MC] __attribute__((aligned(64)));
-static float blockB[KC * NC] __attribute__((aligned(64)));
+static float blockA[KC * MC] __attribute__((aligned(32)));
+static float blockB[KC * NC] __attribute__((aligned(32)));
 
-static const int8_t mask[32]  __attribute__((aligned(64))) = 
+static const int8_t mask[32]  __attribute__((aligned(32))) = 
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0};
 
@@ -25,16 +25,16 @@ static void micro_gemm(float* __restrict C,
                 int n, 
                 int k, 
                 int ldC) {
-  __m256 a, b0, b1;
   __m256 c[MR][2] = {};
 	__m256i masks[2];
 
   // Compute
+  #pragma unroll 4
   for (int p = 0; p < k; p++) {
-    b0 = _mm256_load_ps(blockB);
-    b1 = _mm256_load_ps(blockB + 8);
+    __m256 b0 = _mm256_load_ps(blockB);
+    __m256 b1 = _mm256_load_ps(blockB + 8);
 
-    a = _mm256_broadcast_ss(blockA);
+    __m256 a = _mm256_broadcast_ss(blockA);
     c[0][0] = _mm256_fmadd_ps(a, b0, c[0][0]);
     c[0][1] = _mm256_fmadd_ps(a, b1, c[0][1]);
     a = _mm256_broadcast_ss(blockA + 1);
