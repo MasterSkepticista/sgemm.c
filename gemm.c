@@ -28,9 +28,9 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
     case 4:
       gemm_outer_product_cache_blocking(C, A, B, M, N, K);
       break;
-    case 5:
-      gemm_outer_product_cache_blocking_512(C, A, B, M, N, K);
-      break;
+    // case 5:
+    //   gemm_outer_product_cache_blocking_512(C, A, B, M, N, K);
+    //   break;
     default:
       printf("Invalid kernel number `%d`\n", kernel_num);
       exit(EXIT_FAILURE);
@@ -45,7 +45,6 @@ static double benchmark_kernel(int kernel_num,
                                int N,
                                int K,
                                int repeats) {
-  launch_kernel(kernel_num, C, A, B, M, N, K); // Warmup
   double total_time = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
@@ -99,22 +98,14 @@ int main(int argc, char** argv) {
   int repeats = (int)ceil(100.0 / work_gflops);
 
   constant_init(C, M * N, 0.0f);
-  double mkl_gflops = benchmark_kernel(0, C, A, B, M, N, K, repeats);
-
-  if (kernel_num == 0) {
-    printf("[M = %4d, K = %4d, N = %4d] kernel 0 GFLOP/s: %.2f\n", M, K, N, mkl_gflops);
-  } else {
-    constant_init(C_val, M * N, 0.0f);
-    double kernel_gflops = benchmark_kernel(kernel_num, C_val, A, B, M, N, K, repeats);
-    printf("[M = %4d, K = %4d, N = %4d] kernel 0: %.2f GFLOP/s | kernel %d: %.2f GFLOP/s | factor: %.2f\n",
-           M,
-           K,
-           N,
-           mkl_gflops,
-           kernel_num,
-           kernel_gflops,
-           kernel_gflops / mkl_gflops);
-  }
+  constant_init(C_val, M * N, 0.0f);
+  double kernel_gflops = benchmark_kernel(kernel_num, C_val, A, B, M, N, K, repeats);
+  printf("[M = %4d, K = %4d, N = %4d] kernel %d: %.2f GFLOP/s\n",
+          M,
+          K,
+          N,
+          kernel_num,
+          kernel_gflops);
 
   _mm_free(A);
   _mm_free(B);
