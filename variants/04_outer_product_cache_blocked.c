@@ -18,7 +18,7 @@ static const int8_t mask[32]  __attribute__((aligned(64))) =
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0};
 
-__attribute__((noinline)) static void micro_gemm_6x16(float* __restrict C,
+static void micro_gemm_6x16(float* __restrict C,
                 const float* __restrict blockA,
                 const float* __restrict blockB,
                 int m,
@@ -26,10 +26,9 @@ __attribute__((noinline)) static void micro_gemm_6x16(float* __restrict C,
                 int k,
                 int ldC) {
   __m256 c[MR][2] = {};
-	__m256i masks[2];
 
   // Compute
-  #pragma unroll 4
+  #pragma GCC unroll 4
   for (int p = 0; p < k; p++) {
     __m256 a, b0, b1;
     b0 = _mm256_load_ps(blockB);
@@ -58,8 +57,7 @@ __attribute__((noinline)) static void micro_gemm_6x16(float* __restrict C,
     blockB += NR;
   }
 
-  // Store
-  #pragma unroll
+  // Update C.
   for (int i = 0; i < MR; i++) {
     _mm256_store_ps(&C[i * ldC], _mm256_add_ps(c[i][0], _mm256_load_ps(&C[i * ldC])));
     _mm256_store_ps(&C[i * ldC + 8], _mm256_add_ps(c[i][1], _mm256_load_ps(&C[i * ldC + 8])));
@@ -67,7 +65,7 @@ __attribute__((noinline)) static void micro_gemm_6x16(float* __restrict C,
 }
 
 
-__attribute__((noinline)) static void micro_gemm_edge(float* __restrict C, 
+static void micro_gemm_edge(float* __restrict C, 
                 const float* __restrict blockA, 
                 const float* __restrict blockB, 
                 int m, 
@@ -78,7 +76,7 @@ __attribute__((noinline)) static void micro_gemm_edge(float* __restrict C,
 	__m256i masks[2];
 
   // Compute
-  #pragma unroll 4
+  #pragma GCC unroll 4
   for (int p = 0; p < k; p++) {
     __m256 a, b0, b1;
     b0 = _mm256_load_ps(blockB);
@@ -107,41 +105,20 @@ __attribute__((noinline)) static void micro_gemm_edge(float* __restrict C,
     blockB += NR;
   }
 
-  // Store
-  // Build mask.
+  // Masked update for tail mr/nr.
   masks[0] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n]));
   masks[1] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n + 8]));
-
-  // Masked load
-  /* m is in range 0..5. Unroll with switch-case to avoid loop overhead. */
-  switch (m) {
-    default: /* fallthrough */
-    case 6:
-      _mm256_maskstore_ps(&C[5 * ldC], masks[0], _mm256_add_ps(c[5][0], _mm256_maskload_ps(&C[5 * ldC], masks[0])));
-      _mm256_maskstore_ps(&C[5 * ldC + 8], masks[1], _mm256_add_ps(c[5][1], _mm256_maskload_ps(&C[5 * ldC + 8], masks[1])));
-      /* fallthrough */
-    case 5:
-      _mm256_maskstore_ps(&C[4 * ldC], masks[0], _mm256_add_ps(c[4][0], _mm256_maskload_ps(&C[4 * ldC], masks[0])));
-      _mm256_maskstore_ps(&C[4 * ldC + 8], masks[1], _mm256_add_ps(c[4][1], _mm256_maskload_ps(&C[4 * ldC + 8], masks[1])));
-      /* fallthrough */
-    case 4:
-      _mm256_maskstore_ps(&C[3 * ldC], masks[0], _mm256_add_ps(c[3][0], _mm256_maskload_ps(&C[3 * ldC], masks[0])));
-      _mm256_maskstore_ps(&C[3 * ldC + 8], masks[1], _mm256_add_ps(c[3][1], _mm256_maskload_ps(&C[3 * ldC + 8], masks[1])));
-      /* fallthrough */
-    case 3:
-      _mm256_maskstore_ps(&C[2 * ldC], masks[0], _mm256_add_ps(c[2][0], _mm256_maskload_ps(&C[2 * ldC], masks[0])));
-      _mm256_maskstore_ps(&C[2 * ldC + 8], masks[1], _mm256_add_ps(c[2][1], _mm256_maskload_ps(&C[2 * ldC + 8], masks[1])));
-      /* fallthrough */
-    case 2:
-      _mm256_maskstore_ps(&C[1 * ldC], masks[0], _mm256_add_ps(c[1][0], _mm256_maskload_ps(&C[1 * ldC], masks[0])));
-      _mm256_maskstore_ps(&C[1 * ldC + 8], masks[1], _mm256_add_ps(c[1][1], _mm256_maskload_ps(&C[1 * ldC + 8], masks[1])));
-      /* fallthrough */
-    case 1:
-      _mm256_maskstore_ps(&C[0 * ldC], masks[0], _mm256_add_ps(c[0][0], _mm256_maskload_ps(&C[0 * ldC], masks[0])));
-      _mm256_maskstore_ps(&C[0 * ldC + 8], masks[1], _mm256_add_ps(c[0][1], _mm256_maskload_ps(&C[0 * ldC + 8], masks[1])));
-      break;
-    case 0:
-      break;
+  for (int i = 0; i < m; i++) {
+    _mm256_maskstore_ps(
+      &C[i * ldC], 
+      masks[0], 
+      _mm256_add_ps(c[i][0], _mm256_maskload_ps(&C[i * ldC], masks[0]))
+    );
+    _mm256_maskstore_ps(
+      &C[i * ldC + 8], 
+      masks[1], 
+      _mm256_add_ps(c[i][1], _mm256_maskload_ps(&C[i * ldC + 8], masks[1]))
+    );
   }
 }
 
@@ -199,10 +176,7 @@ void gemm_outer_product_cache_blocking(float * __restrict C,
                               &C[(i + ir) * N + (j + jr)],
                               &blockA[ir * kc],
                               &blockB[jr * kc],
-                              mr,
-                              nr,
-                              kc,
-                              N);
+                              mr, nr, kc, N);
             } else {
               micro_gemm_edge(&C[(i + ir) * N + (j + jr)], 
                               &blockA[ir * kc], 
