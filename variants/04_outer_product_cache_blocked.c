@@ -58,6 +58,7 @@ static void micro_gemm_6x16(float* __restrict C,
   }
 
   // Update C.
+  #pragma GCC unroll 6
   for (int i = 0; i < MR; i++) {
     _mm256_store_ps(&C[i * ldC], _mm256_add_ps(c[i][0], _mm256_load_ps(&C[i * ldC])));
     _mm256_store_ps(&C[i * ldC + 8], _mm256_add_ps(c[i][1], _mm256_load_ps(&C[i * ldC + 8])));
