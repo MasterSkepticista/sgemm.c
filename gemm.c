@@ -95,7 +95,7 @@ int main(int argc, char** argv) {
 
   // Benchmark
   double work_gflops = (2.0 * M * N * K) * 1e-9;
-  int repeats = (int)ceil(100.0 / work_gflops);
+  int repeats = (int)ceil(10.0 / work_gflops);
 
   constant_init(C, M * N, 0.0f);
   constant_init(C_val, M * N, 0.0f);

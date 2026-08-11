@@ -11,7 +11,7 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
 
 * Compile and run.
   ```bash
-  make DEBUG=1 && ./gemm <kernel_num> <size>
+  DEBUG=1 make -j4 && ./gemm <kernel_num> <size>
   ```
   Kernel number `0` is the reference sgemm implementation (openBLAS). This should give the peak GFLOP/s on your machine.
 
