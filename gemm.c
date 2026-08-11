@@ -1,6 +1,6 @@
 /**
  * Optimizing SGEMM in C using AVX (Row-major layout).
- * Build with benchmark.sh, then run: ./gemm 0 1024
+ * Build with make, then run: ./gemm 0 1024
  */
 
 #include <immintrin.h>
@@ -28,9 +28,9 @@ void launch_kernel(int kernel_num, float* C, float* A, float* B, int M, int N, i
     case 4:
       gemm_outer_product_cache_blocking(C, A, B, M, N, K);
       break;
-    // case 5:
-    //   gemm_outer_product_cache_blocking_512(C, A, B, M, N, K);
-    //   break;
+    case 5:
+      gemm_outer_product_cache_blocking_512(C, A, B, M, N, K);
+      break;
     default:
       printf("Invalid kernel number `%d`\n", kernel_num);
       exit(EXIT_FAILURE);

@@ -11,9 +11,11 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
 
 * Compile and run.
   ```bash
-  DEBUG=1 ./build.sh && ./gemm <kernel_num> <size>
+  make DEBUG=1 && ./gemm <kernel_num> <size>
   ```
   Kernel number `0` is the reference sgemm implementation (openBLAS). This should give the peak GFLOP/s on your machine.
+
+  Kernel `5` is compiled with AVX-512F instructions. Running it on a CPU without AVX-512F will terminate with an illegal-instruction signal; kernels `0`–`4` do not require AVX-512F.
 
 * Sweep benchmark.
   ```bash
