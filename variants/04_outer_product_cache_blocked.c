@@ -27,8 +27,13 @@ static void micro_gemm_6x16(float* __restrict C,
                 int ldC) {
   __m256 c[MR][2] = {};
 
+  #pragma unroll 6
+  for (int i = 0; i < MR; i++) {
+    _mm_prefetch((const char *)&C[i * ldC], _MM_HINT_T1);
+  }
+
   // Compute
-  #pragma GCC unroll 4
+  #pragma unroll 4
   for (int p = 0; p < k; p++) {
     __m256 a, b0, b1;
     b0 = _mm256_load_ps(blockB);
@@ -58,7 +63,7 @@ static void micro_gemm_6x16(float* __restrict C,
   }
 
   // Update C.
-  #pragma GCC unroll 6
+  #pragma unroll 6
   for (int i = 0; i < MR; i++) {
     _mm256_store_ps(&C[i * ldC], _mm256_add_ps(c[i][0], _mm256_load_ps(&C[i * ldC])));
     _mm256_store_ps(&C[i * ldC + 8], _mm256_add_ps(c[i][1], _mm256_load_ps(&C[i * ldC + 8])));
@@ -77,7 +82,7 @@ static void micro_gemm_edge(float* __restrict C,
 	__m256i masks[2];
 
   // Compute
-  #pragma GCC unroll 4
+  #pragma unroll 4
   for (int p = 0; p < k; p++) {
     __m256 a, b0, b1;
     b0 = _mm256_load_ps(blockB);

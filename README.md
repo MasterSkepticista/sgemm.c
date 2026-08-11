@@ -4,9 +4,9 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
 
 ### Prerequisites
 
-* Install OpenBLAS
+* Install OpenBLAS, build tools
   ```bash
-  sudo apt install libopenblas-dev
+  sudo apt install libopenblas-dev build-essential
   ```
 
 * Compile and run.
@@ -27,5 +27,5 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
 * `1`: Simple triple-for-loop with reordering.
 * `2`: Same as kernel `1`, but with cache-blocking for consistent performance across all sizes.
 * `3`: Reformulation of Matrix-Multiplication as a tiled outer product. More FLOP/s per byte moved.
-* `4`: Same as kernel `3`, but with cache-blocking. This kernel should come close to AVX-256 performance limit on your CPU. Calculate the peak manually. E.g. 2.5GHz * 32 FLOPs/cycle = 80GFLOP/s
-* `5`: Similar design to kernel `4`, but uses 512-bit wide AVX intrinsics, and requires a different tuning of constants. This kernel should come close to AVX-512 performance limit on your CPU (assume OpenBLAS to be the standard). In contrast, AVX-512 can do 64 FLOPs/cycle.
+* `4`: Same as kernel `3`, but with cache-blocking. This kernel should come close to AVX-256 performance limit on your CPU. Calculate the peak manually. E.g. 2.5GHz * 2 FMAs * 2 FLOP (mul + add) * 8 floats/cycle = 80GFLOP/s
+* `5`: Similar design to kernel `4`, but uses 512-bit wide AVX intrinsics, and requires a different tuning of constants. This kernel should come close to AVX-512 performance limit on your CPU (assume OpenBLAS to be the standard). AVX-512 enabled cores can execute 64 FLOPs/cycle (16 floats/cycle).

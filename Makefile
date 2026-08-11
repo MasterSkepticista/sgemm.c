@@ -1,4 +1,4 @@
-CC := gcc
+CC := clang
 CPPFLAGS :=
 CFLAGS := -O3 -funroll-loops -march=native
 LDLIBS := -lopenblas -lm
