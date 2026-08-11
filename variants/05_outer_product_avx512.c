@@ -9,7 +9,7 @@
 
 #define MC MR * 256
 #define KC MR * 256
-#define NC 48
+#define NC 48 * 2
 
 static float blockA[KC * MC] __attribute__((aligned(64)));
 static float blockB[KC * NC] __attribute__((aligned(64)));
@@ -50,23 +50,19 @@ static inline int clamp16(int n) {
   return n;
 }
 
-static void micro_gemm_512_8x48(float* __restrict C, 
-                                const float* __restrict blockA, 
-                                const float* __restrict blockB, 
-                                int m, 
-                                int n, 
-                                int k, 
-                                int ldC) {
-  __m512 a, b0, b1, b2;
-  __m512 c[MR][3] = {};
-
-  // Compute
+static inline __attribute__((always_inline))
+void accumulate_8x48(__m512 c[MR][3],
+                     const float* __restrict blockA,
+                     const float* __restrict blockB,
+                     int k) {
+  #pragma unroll 4
   for (int p = 0; p < k; p++) {
+    __m512 a, b0, b1, b2;
     b0 = _mm512_load_ps(blockB);
     b1 = _mm512_load_ps(blockB + 16);
     b2 = _mm512_load_ps(blockB + 32);
 
-    #pragma unroll
+    #pragma unroll 8
     for (int i = 0; i < MR; i++) {
       a = _mm512_set1_ps(blockA[i]);
       c[i][0] = _mm512_fmadd_ps(a, b0, c[i][0]);
@@ -77,9 +73,29 @@ static void micro_gemm_512_8x48(float* __restrict C,
     blockA += MR;
     blockB += NR;
   }
+}
+
+static void micro_gemm_512_8x48(float* __restrict C, 
+                                const float* __restrict blockA, 
+                                const float* __restrict blockB, 
+                                int m, 
+                                int n, 
+                                int k, 
+                                int ldC) {
+  __m512 c[MR][3] = {};
+
+  // Start fetching C into L1.
+  for (int i = 0; i < MR; i++) {
+    _mm_prefetch(&C[i * ldC], _MM_HINT_T0);
+    _mm_prefetch(&C[i * ldC + 16], _MM_HINT_T0);
+    _mm_prefetch(&C[i * ldC + 32], _MM_HINT_T0);
+  }
+
+  // Compute
+  accumulate_8x48(c, blockA, blockB, k);
 
   // Load, update and store fused
-  #pragma unroll
+  #pragma unroll 8
   for (int i = 0; i < MR; i++) {
     __m512 tmp0 = _mm512_loadu_ps(&C[i * ldC]);
     __m512 tmp1 = _mm512_loadu_ps(&C[i * ldC + 16]);
@@ -106,23 +122,15 @@ static void micro_gemm_512_edge(float* __restrict C,
   __m512 c[MR][3] = {};
   __mmask16 masks[3];
 
-  // Compute
-  for (int p = 0; p < k; p++) {
-    b0 = _mm512_load_ps(blockB);
-    b1 = _mm512_load_ps(blockB + 16);
-    b2 = _mm512_load_ps(blockB + 32);
-
-    #pragma unroll
-    for (int i = 0; i < MR; i++) {
-      a = _mm512_set1_ps(blockA[i]);
-      c[i][0] = _mm512_fmadd_ps(a, b0, c[i][0]);
-      c[i][1] = _mm512_fmadd_ps(a, b1, c[i][1]);
-      c[i][2] = _mm512_fmadd_ps(a, b2, c[i][2]);
-    }
-
-    blockA += MR;
-    blockB += NR;
+  // Start fetching C into L1.
+  for (int i = 0; i < MR; i++) {
+    _mm_prefetch(&C[i * ldC], _MM_HINT_T0);
+    _mm_prefetch(&C[i * ldC + 16], _MM_HINT_T0);
+    _mm_prefetch(&C[i * ldC + 32], _MM_HINT_T0);
   }
+
+  // Compute
+  accumulate_8x48(c, blockA, blockB, k);
 
   // Load, update and store fused
   masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
