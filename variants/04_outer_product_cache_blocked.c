@@ -27,11 +27,6 @@ static void micro_gemm_6x16(float* __restrict C,
                 int ldC) {
   __m256 c[MR][2] = {};
 
-  #pragma unroll 6
-  for (int i = 0; i < MR; i++) {
-    _mm_prefetch((const char *)&C[i * ldC], _MM_HINT_T1);
-  }
-
   // Compute
   #pragma unroll 4
   for (int p = 0; p < k; p++) {
