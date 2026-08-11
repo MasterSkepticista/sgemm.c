@@ -9,7 +9,7 @@
 
 #define MC MR * 256
 #define KC MR * 256
-#define NC 48 * 2
+#define NC 48 * 4
 
 static float blockA[KC * MC] __attribute__((aligned(64)));
 static float blockB[KC * NC] __attribute__((aligned(64)));
@@ -55,7 +55,6 @@ void accumulate_8x48(__m512 c[MR][3],
                      const float* __restrict blockA,
                      const float* __restrict blockB,
                      int k) {
-  #pragma unroll 4
   for (int p = 0; p < k; p++) {
     __m512 a, b0, b1, b2;
     b0 = _mm512_load_ps(blockB);
@@ -97,13 +96,9 @@ static void micro_gemm_512_8x48(float* __restrict C,
   // Load, update and store fused
   #pragma unroll 8
   for (int i = 0; i < MR; i++) {
-    __m512 tmp0 = _mm512_loadu_ps(&C[i * ldC]);
-    __m512 tmp1 = _mm512_loadu_ps(&C[i * ldC + 16]);
-    __m512 tmp2 = _mm512_loadu_ps(&C[i * ldC + 32]);
-
-    tmp0 = _mm512_add_ps(tmp0, c[i][0]);
-    tmp1 = _mm512_add_ps(tmp1, c[i][1]);
-    tmp2 = _mm512_add_ps(tmp2, c[i][2]);
+    __m512 tmp0 = _mm512_add_ps(_mm512_loadu_ps(&C[i * ldC]), c[i][0]);
+    __m512 tmp1 = _mm512_add_ps(_mm512_loadu_ps(&C[i * ldC + 16]), c[i][1]);
+    __m512 tmp2 = _mm512_add_ps(_mm512_loadu_ps(&C[i * ldC + 32]), c[i][2]);
 
     _mm512_storeu_ps(&C[i * ldC], tmp0);
     _mm512_storeu_ps(&C[i * ldC + 16], tmp1);
