@@ -59,6 +59,51 @@ static void micro_gemm_512_8x48(float* __restrict C,
                                 int ldC) {
   __m512 a, b0, b1, b2;
   __m512 c[MR][3] = {};
+
+  // Compute
+  for (int p = 0; p < k; p++) {
+    b0 = _mm512_load_ps(blockB);
+    b1 = _mm512_load_ps(blockB + 16);
+    b2 = _mm512_load_ps(blockB + 32);
+
+    #pragma unroll
+    for (int i = 0; i < MR; i++) {
+      a = _mm512_set1_ps(blockA[i]);
+      c[i][0] = _mm512_fmadd_ps(a, b0, c[i][0]);
+      c[i][1] = _mm512_fmadd_ps(a, b1, c[i][1]);
+      c[i][2] = _mm512_fmadd_ps(a, b2, c[i][2]);
+    }
+
+    blockA += MR;
+    blockB += NR;
+  }
+
+  // Load, update and store fused
+  #pragma unroll
+  for (int i = 0; i < MR; i++) {
+    __m512 tmp0 = _mm512_loadu_ps(&C[i * ldC]);
+    __m512 tmp1 = _mm512_loadu_ps(&C[i * ldC + 16]);
+    __m512 tmp2 = _mm512_loadu_ps(&C[i * ldC + 32]);
+
+    tmp0 = _mm512_add_ps(tmp0, c[i][0]);
+    tmp1 = _mm512_add_ps(tmp1, c[i][1]);
+    tmp2 = _mm512_add_ps(tmp2, c[i][2]);
+
+    _mm512_storeu_ps(&C[i * ldC], tmp0);
+    _mm512_storeu_ps(&C[i * ldC + 16], tmp1);
+    _mm512_storeu_ps(&C[i * ldC + 32], tmp2);
+  }
+}
+
+static void micro_gemm_512_edge(float* __restrict C, 
+                                const float* __restrict blockA, 
+                                const float* __restrict blockB, 
+                                int m, 
+                                int n, 
+                                int k, 
+                                int ldC) {
+  __m512 a, b0, b1, b2;
+  __m512 c[MR][3] = {};
   __mmask16 masks[3];
 
   // Compute
@@ -80,38 +125,22 @@ static void micro_gemm_512_8x48(float* __restrict C,
   }
 
   // Load, update and store fused
-  if (n < NR) {
-    masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
-    masks[1] = _cvtu32_mask16((1 << clamp16(n - 16)) - 1);
-    masks[2] = _cvtu32_mask16((1 << clamp16(n - 32)) - 1);
+  masks[0] = _cvtu32_mask16((1 << clamp16(n)) - 1);
+  masks[1] = _cvtu32_mask16((1 << clamp16(n - 16)) - 1);
+  masks[2] = _cvtu32_mask16((1 << clamp16(n - 32)) - 1);
 
-    for (int i = 0; i < m; i++) {
-      __m512 tmp0 = _mm512_maskz_loadu_ps(masks[0], &C[i * ldC]);
-      __m512 tmp1 = _mm512_maskz_loadu_ps(masks[1], &C[i * ldC + 16]);
-      __m512 tmp2 = _mm512_maskz_loadu_ps(masks[2], &C[i * ldC + 32]);
+  for (int i = 0; i < m; i++) {
+    __m512 tmp0 = _mm512_maskz_loadu_ps(masks[0], &C[i * ldC]);
+    __m512 tmp1 = _mm512_maskz_loadu_ps(masks[1], &C[i * ldC + 16]);
+    __m512 tmp2 = _mm512_maskz_loadu_ps(masks[2], &C[i * ldC + 32]);
 
-      tmp0 = _mm512_add_ps(tmp0, c[i][0]);
-      tmp1 = _mm512_add_ps(tmp1, c[i][1]);
-      tmp2 = _mm512_add_ps(tmp2, c[i][2]);
+    tmp0 = _mm512_add_ps(tmp0, c[i][0]);
+    tmp1 = _mm512_add_ps(tmp1, c[i][1]);
+    tmp2 = _mm512_add_ps(tmp2, c[i][2]);
 
-      _mm512_mask_store_ps(&C[i * ldC], masks[0], tmp0);
-      _mm512_mask_store_ps(&C[i * ldC + 16], masks[1], tmp1);
-      _mm512_mask_store_ps(&C[i * ldC + 32], masks[2], tmp2);
-    }
-  } else {
-    for (int i = 0; i < m; i++) {
-      __m512 tmp0 = _mm512_loadu_ps(&C[i * ldC]);
-      __m512 tmp1 = _mm512_loadu_ps(&C[i * ldC + 16]);
-      __m512 tmp2 = _mm512_loadu_ps(&C[i * ldC + 32]);
-
-      tmp0 = _mm512_add_ps(tmp0, c[i][0]);
-      tmp1 = _mm512_add_ps(tmp1, c[i][1]);
-      tmp2 = _mm512_add_ps(tmp2, c[i][2]);
-
-      _mm512_storeu_ps(&C[i * ldC], tmp0);
-      _mm512_storeu_ps(&C[i * ldC + 16], tmp1);
-      _mm512_storeu_ps(&C[i * ldC + 32], tmp2);
-    }
+    _mm512_mask_store_ps(&C[i * ldC], masks[0], tmp0);
+    _mm512_mask_store_ps(&C[i * ldC + 16], masks[1], tmp1);
+    _mm512_mask_store_ps(&C[i * ldC + 32], masks[2], tmp2);
   }
 }
 
@@ -133,10 +162,17 @@ void gemm_outer_product_cache_blocking_512(float * __restrict C,
           for (int jr = 0; jr < nc; jr += NR) {
             const int mr = min(MR, mc - ir);
             const int nr = min(NR, nc - jr);
-            micro_gemm_512_8x48(&C[(i + ir) * N + (j + jr)], 
-                                &blockA[ir * kc], 
-                                &blockB[jr * kc], 
-                                mr, nr, kc, N);
+            if (nr == NR && mr == MR && (N % 8) == 0) {
+              micro_gemm_512_8x48(&C[(i + ir) * N + (j + jr)], 
+                                  &blockA[ir * kc], 
+                                  &blockB[jr * kc], 
+                                  mr, nr, kc, N);
+            } else {
+              micro_gemm_512_edge(&C[(i + ir) * N + (j + jr)], 
+                                  &blockA[ir * kc], 
+                                  &blockB[jr * kc], 
+                                  mr, nr, kc, N);
+            }
           }
         }
       }
