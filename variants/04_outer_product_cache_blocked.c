@@ -18,16 +18,11 @@ static const int8_t mask[32]  __attribute__((aligned(64))) =
   {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0,  0};
 
-static void micro_gemm_6x16(float* __restrict C,
-                const float* __restrict blockA,
-                const float* __restrict blockB,
-                int m,
-                int n,
-                int k,
-                int ldC) {
-  __m256 c[MR][2] = {};
-
-  // Compute
+static inline __attribute__((always_inline))
+void accumulate_6x16(__m256 c[MR][2],
+                     const float* __restrict blockA,
+                     const float* __restrict blockB,
+                     int k) {
   #pragma unroll 4
   for (int p = 0; p < k; p++) {
     __m256 a, b0, b1;
@@ -56,6 +51,24 @@ static void micro_gemm_6x16(float* __restrict C,
     blockA += MR;
     blockB += NR;
   }
+}
+
+static void micro_gemm_6x16(float* __restrict C,
+                const float* __restrict blockA,
+                const float* __restrict blockB,
+                int m,
+                int n,
+                int k,
+                int ldC) {
+  __m256 c[MR][2] = {};
+
+  // Start fetching C into L1.
+  for (int i = 0; i < MR; i++) {
+    _mm_prefetch(&C[i * ldC], _MM_HINT_T0);
+  }
+
+  // Compute all but the final 32 K values.
+  accumulate_6x16(c, blockA, blockB, k);
 
   // Update C.
   #pragma unroll 6
@@ -74,39 +87,17 @@ static void micro_gemm_edge(float* __restrict C,
                 int k, 
                 int ldC) {
   __m256 c[MR][2] = {};
-	__m256i masks[2];
 
-  // Compute
-  #pragma unroll 4
-  for (int p = 0; p < k; p++) {
-    __m256 a, b0, b1;
-    b0 = _mm256_load_ps(blockB);
-    b1 = _mm256_load_ps(blockB + 8);
-
-    a = _mm256_broadcast_ss(blockA);
-    c[0][0] = _mm256_fmadd_ps(a, b0, c[0][0]);
-    c[0][1] = _mm256_fmadd_ps(a, b1, c[0][1]);
-    a = _mm256_broadcast_ss(blockA + 1);
-    c[1][0] = _mm256_fmadd_ps(a, b0, c[1][0]);
-    c[1][1] = _mm256_fmadd_ps(a, b1, c[1][1]);
-    a = _mm256_broadcast_ss(blockA + 2);
-    c[2][0] = _mm256_fmadd_ps(a, b0, c[2][0]);
-    c[2][1] = _mm256_fmadd_ps(a, b1, c[2][1]);
-    a = _mm256_broadcast_ss(blockA + 3);
-    c[3][0] = _mm256_fmadd_ps(a, b0, c[3][0]);
-    c[3][1] = _mm256_fmadd_ps(a, b1, c[3][1]);
-    a = _mm256_broadcast_ss(blockA + 4);
-    c[4][0] = _mm256_fmadd_ps(a, b0, c[4][0]);
-    c[4][1] = _mm256_fmadd_ps(a, b1, c[4][1]);
-    a = _mm256_broadcast_ss(blockA + 5);
-    c[5][0] = _mm256_fmadd_ps(a, b0, c[5][0]);
-    c[5][1] = _mm256_fmadd_ps(a, b1, c[5][1]);
-
-    blockA += MR;
-    blockB += NR;
+  // Start fetching C into L1.
+  for (int i = 0; i < MR; i++) {
+    _mm_prefetch(&C[i * ldC], _MM_HINT_T0);
   }
 
+  // Compute
+  accumulate_6x16(c, blockA, blockB, k);
+
   // Masked update for tail mr/nr.
+	__m256i masks[2];
   masks[0] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n]));
   masks[1] = _mm256_cvtepi8_epi32(_mm_loadu_si64(&mask[16 - n + 8]));
   for (int i = 0; i < m; i++) {
