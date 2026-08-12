@@ -1,6 +1,6 @@
 ## Optimizing SGEMM in C
 
-An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
+An attempt to beat openBLAS for the single precision GEMM operation, in single-threaded.
 
 ### Prerequisites
 
@@ -33,10 +33,65 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
   ones. Kernel `5` and its plot are skipped automatically when AVX-512F is not
   supported by the CPU.
 
-### Kernels
-* `0`: Reference OpenBLAS implementation.
-* `1`: Simple triple-for-loop with reordering.
-* `2`: Same as kernel `1`, but with cache-blocking for consistent performance across all sizes.
-* `3`: Reformulation of Matrix-Multiplication as a tiled outer product. More FLOP/s per byte moved.
-* `4`: Same as kernel `3`, but with cache-blocking. This kernel should come close to AVX-256 performance limit on your CPU. Calculate the peak manually. E.g. 2.5GHz * 2 FMAs * 2 FLOP (mul + add) * 8 floats/cycle = 80GFLOP/s
-* `5`: Similar design to kernel `4`, but uses 512-bit wide AVX intrinsics, and requires a different tuning of constants. This kernel should come close to AVX-512 performance limit on your CPU (assume OpenBLAS to be the standard). AVX-512 enabled cores can execute 64 FLOPs/cycle (16 floats/cycle).
+## Results
+
+### Intel Core i5-8250U @ 2.5 GHz (AVX2)
+
+The theoretical single-core peak is `2 FMAs/cycle × 2 operations/FMA × 8 floats/FMA × 2.5 GHz = 80 GFLOP/s`.
+
+**Kernel 1 — Loop reordering:** Reorder the scalar loops to `i-k-j` so each
+value from A is reused while B and C are traversed contiguously.
+
+![KBL performance through kernel 1](figures/kbl/sgemm_gflops_0_1.png)
+
+**Kernel 2 — Cache blocking:** Split the matrices into cache-sized tiles to
+retain working data and sustain performance as matrix sizes grow.
+
+![KBL performance through kernel 2](figures/kbl/sgemm_gflops_0_2.png)
+
+**Kernel 3 — Tiled outer product:** Pack `6x16` tiles and compute them with an
+AVX2 FMA microkernel to perform more arithmetic per byte loaded.
+
+![KBL performance through kernel 3](figures/kbl/sgemm_gflops_0_3.png)
+
+**Kernel 4 — Cache-blocked outer product:** Add reusable packed panels and
+multi-level cache blocking around the AVX2 microkernel to reduce memory traffic.
+
+![KBL performance through kernel 4](figures/kbl/sgemm_gflops_0_4.png)
+
+The final AVX2 kernel reaches 69 GFLOP/s versus OpenBLAS at 72 GFLOP/s—about
+96% of OpenBLAS performance and within 5% of it.
+
+### Intel Xeon Platinum 8488C @ 3.2 GHz (AVX-512)
+
+The theoretical single-core peak is `2 FMAs/cycle × 2 operations/FMA × 16 floats/FMA × 3.2 GHz = 204.8 GFLOP/s`.
+
+**Kernel 1 — Loop reordering:** Reorder the scalar loops to `i-k-j` so each
+value from A is reused while B and C are traversed contiguously.
+
+![SPR performance through kernel 1](figures/spr/sgemm_gflops_0_1.png)
+
+**Kernel 2 — Cache blocking:** Split the matrices into cache-sized tiles to
+retain working data and sustain performance as matrix sizes grow.
+
+![SPR performance through kernel 2](figures/spr/sgemm_gflops_0_2.png)
+
+**Kernel 3 — Tiled outer product:** Pack `6x16` tiles and compute them with an
+AVX2 FMA microkernel to perform more arithmetic per byte loaded.
+
+![SPR performance through kernel 3](figures/spr/sgemm_gflops_0_3.png)
+
+**Kernel 4 — Cache-blocked outer product:** Add reusable packed panels and
+multi-level cache blocking around the AVX2 microkernel to reduce memory traffic.
+
+![SPR performance through kernel 4](figures/spr/sgemm_gflops_0_4.png)
+
+**Kernel 5 — AVX-512 outer product:** Widen the microkernel to AVX-512 with an
+`8x48` tile and retune the blocking sizes for the wider vectors.
+
+![SPR performance through kernel 5](figures/spr/sgemm_gflops_0_5.png)
+
+At large matrix sizes, the final AVX-512 kernel matches OpenBLAS. At small
+matrix sizes it remains slower because OpenBLAS uses a direct-path GEMM that
+skips packing overhead; implementing a direct path is currently outside the
+scope of this repository.
