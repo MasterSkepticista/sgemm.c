@@ -4,9 +4,9 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
 
 ### Prerequisites
 
-* Install OpenBLAS, build tools
+* Install OpenBLAS, build tools, and gnuplot
   ```bash
-  sudo apt install libopenblas-dev build-essential
+  sudo apt install libopenblas-dev build-essential gnuplot
   ```
 
 * Compile and run.
@@ -21,6 +21,17 @@ An attempt to beat Intel-MKL/openBLAS for the single precision GEMM operation.
   ```bash
   DEBUG=1 ./benchmark.sh <kernel_num>
   ```
+
+* Benchmark kernels and plot them.
+  ```bash
+  make plot
+  OMP_NUM_THREADS=1 ./plot
+  ```
+  This writes the raw measurements once to `output/sgemm_gflops.dat`, then
+  creates cumulative plots named `output/sgemm_gflops_0_1.png` through
+  `output/sgemm_gflops_0_5.png`. Each plot adds the next kernel to the preceding
+  ones. Kernel `5` and its plot are skipped automatically when AVX-512F is not
+  supported by the CPU.
 
 ### Kernels
 * `0`: Reference OpenBLAS implementation.

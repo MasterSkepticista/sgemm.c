@@ -1,2 +1,4 @@
 gemm
+plot
+output/
 .build/

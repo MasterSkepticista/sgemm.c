@@ -8,8 +8,10 @@ CPPFLAGS += -DDEBUG
 endif
 
 BUILD_DIR := .build
-BASE_SRCS := gemm.c $(wildcard variants/0[0-4]_*.c)
+VARIANT_SRCS := $(wildcard variants/0[0-4]_*.c)
+BASE_SRCS := gemm.c $(VARIANT_SRCS)
 BASE_OBJS := $(patsubst %.c,$(BUILD_DIR)/%.o,$(BASE_SRCS))
+PLOT_OBJS := $(BUILD_DIR)/plot.o $(patsubst %.c,$(BUILD_DIR)/%.o,$(VARIANT_SRCS))
 AVX512_OBJ := $(BUILD_DIR)/variants/05_outer_product_avx512.o
 OBJS := $(BASE_OBJS) $(AVX512_OBJ)
 
@@ -20,6 +22,9 @@ all: gemm
 gemm: $(OBJS)
 	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
 
+plot: $(PLOT_OBJS) $(AVX512_OBJ)
+	$(CC) $(CFLAGS) $^ $(LDLIBS) -o $@
+
 $(BUILD_DIR)/%.o: %.c
 	@mkdir -p $(dir $@)
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
@@ -27,4 +32,5 @@ $(BUILD_DIR)/%.o: %.c
 $(AVX512_OBJ): CFLAGS += -mavx512f
 
 clean:
-	rm -rf $(BUILD_DIR) gemm
+	rm -rf $(BUILD_DIR) gemm plot
+	rm -rf output/
