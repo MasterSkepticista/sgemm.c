@@ -33,4 +33,3 @@ $(AVX512_OBJ): CFLAGS += -mavx512f
 
 clean:
 	rm -rf $(BUILD_DIR) gemm plot
-	rm -rf output/
