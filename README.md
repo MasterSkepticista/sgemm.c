@@ -1,4 +1,4 @@
-## Optimizing SGEMM in C
+## sgemm.c
 
 An attempt to beat openBLAS for the single precision GEMM operation, in single-threaded.
 
