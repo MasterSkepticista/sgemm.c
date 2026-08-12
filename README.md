@@ -101,3 +101,6 @@ At large matrix sizes, the final AVX-512 kernel matches OpenBLAS. At small
 matrix sizes it remains slower because OpenBLAS uses a direct-path GEMM that
 skips packing overhead; implementing a direct path is currently outside the
 scope of this repository.
+
+## License
+MIT
