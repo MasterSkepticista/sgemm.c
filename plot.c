@@ -87,7 +87,7 @@ static int generate_plot(int kernel_count) {
   }
 
   fprintf(gnuplot, "set terminal pngcairo size 1280,720\n");
-  fprintf(gnuplot, "set title 'Kaby Lake (i5-8250U @ 2.5GHz, AVX2)'\n");
+  fprintf(gnuplot, "set title 'SGEMM Performance'\n");
   fprintf(gnuplot, "set xlabel 'Matrix size (M = N = K)'\n");
   fprintf(gnuplot, "set ylabel 'GFLOP/s'\n");
   const int size_count = sizeof(benchmark_sizes) / sizeof(benchmark_sizes[0]);
