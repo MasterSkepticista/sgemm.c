@@ -11,12 +11,14 @@
 #include "variants/variants.h"
 
 #define MEM_ALIGN 64
-#define MIN_SIZE 64
-#define MAX_SIZE 4096
-#define SIZE_STEP 64
 #define MAX_KERNEL_COUNT 6
 #define MIN_BENCHMARK_SECONDS 0.2
 #define DATA_FILE "output/sgemm_gflops.dat"
+
+static const int benchmark_sizes[] = {
+    64,  96,  128, 192, 256,  384,  512,
+    768, 1024, 1536, 2048, 3072, 4096,
+};
 
 static const char* kernel_names[MAX_KERNEL_COUNT] = {
     "0:OpenBLAS",
@@ -85,10 +87,14 @@ static int generate_plot(int kernel_count) {
   }
 
   fprintf(gnuplot, "set terminal pngcairo size 1280,720\n");
-  fprintf(gnuplot, "set title 'SGEMM performance by kernel'\n");
+  fprintf(gnuplot, "set title 'Kaby Lake (i5-8250U @ 2.5GHz, AVX2)'\n");
   fprintf(gnuplot, "set xlabel 'Matrix size (M = N = K)'\n");
   fprintf(gnuplot, "set ylabel 'GFLOP/s'\n");
-  fprintf(gnuplot, "set xrange [%d:%d]\n", MIN_SIZE, MAX_SIZE);
+  const int size_count = sizeof(benchmark_sizes) / sizeof(benchmark_sizes[0]);
+  fprintf(gnuplot,
+          "set xrange [%d:%d]\n",
+          benchmark_sizes[0],
+          benchmark_sizes[size_count - 1]);
   fprintf(gnuplot, "set grid\n");
   fprintf(gnuplot, "set key inside right center\n");
 
@@ -143,7 +149,9 @@ int main(void) {
   }
   fprintf(data, "\n");
 
-  for (int size = MIN_SIZE; size <= MAX_SIZE; size += SIZE_STEP) {
+  const int size_count = sizeof(benchmark_sizes) / sizeof(benchmark_sizes[0]);
+  for (int size_index = 0; size_index < size_count; size_index++) {
+    const int size = benchmark_sizes[size_index];
     const size_t elements = (size_t)size * size;
     float* A = _mm_malloc(sizeof(*A) * elements, MEM_ALIGN);
     float* B = _mm_malloc(sizeof(*B) * elements, MEM_ALIGN);
