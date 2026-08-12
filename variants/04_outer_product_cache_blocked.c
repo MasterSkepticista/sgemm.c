@@ -67,7 +67,7 @@ static void micro_gemm_6x16(float* __restrict C,
     _mm_prefetch(&C[i * ldC], _MM_HINT_T0);
   }
 
-  // Compute all but the final 32 K values.
+  // Compute.
   accumulate_6x16(c, blockA, blockB, k);
 
   // Update C.
