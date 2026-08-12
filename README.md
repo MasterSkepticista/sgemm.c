@@ -56,6 +56,8 @@ AVX2 FMA microkernel to perform more arithmetic per byte loaded.
 
 **Kernel 4 — Cache-blocked outer product:** Add reusable packed panels and
 multi-level cache blocking around the AVX2 microkernel to reduce memory traffic.
+Prefetching C tiles, unrolling the hot loops, and masked fringe-tile handling
+further improve throughput for both full and partial tiles.
 
 ![KBL performance through kernel 4](figures/kbl/sgemm_gflops_0_4.png)
 
@@ -83,11 +85,15 @@ AVX2 FMA microkernel to perform more arithmetic per byte loaded.
 
 **Kernel 4 — Cache-blocked outer product:** Add reusable packed panels and
 multi-level cache blocking around the AVX2 microkernel to reduce memory traffic.
+Prefetching C tiles, unrolling the hot loops, and masked fringe-tile handling
+further improve throughput for both full and partial tiles.
 
 ![SPR performance through kernel 4](figures/spr/sgemm_gflops_0_4.png)
 
 **Kernel 5 — AVX-512 outer product:** Widen the microkernel to AVX-512 with an
-`8x48` tile and retune the blocking sizes for the wider vectors.
+`8x48` tile and retune the blocking sizes for the wider vectors. It retains
+C-tile prefetching, loop unrolling, and masked fringe-tile handling, which
+together bring performance close to OpenBLAS.
 
 ![SPR performance through kernel 5](figures/spr/sgemm_gflops_0_5.png)
 
