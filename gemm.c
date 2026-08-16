@@ -45,6 +45,7 @@ static double benchmark_kernel(int kernel_num,
                                int N,
                                int K,
                                int repeats) {
+  launch_kernel(kernel_num, C, A, B, M, N, K);
   double total_time = 0.0;
   for (int i = 0; i < repeats; i++) {
     double start = tick();
