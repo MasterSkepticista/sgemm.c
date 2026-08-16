@@ -16,8 +16,11 @@
 #define DATA_FILE "output/sgemm_gflops.dat"
 
 static const int benchmark_sizes[] = {
-    64,  96,  128, 192, 256,  384,  512,
-    768, 1024, 1536, 2048, 3072, 4096,
+    48,   64,   96,   128,  144,  192,  240,  256,
+    288,  336,  384,  432,  480,  512,  528,  624,
+    720,  768,  816,  912,  1008, 1024, 1056, 1104,
+    1296, 1488, 1536, 1584, 1824, 2016, 2048, 2064,
+    2160, 2592, 3024, 3072, 3120, 3648, 4080, 4096,
 };
 
 static const char* kernel_names[MAX_KERNEL_COUNT] = {
@@ -86,7 +89,7 @@ static int generate_plot(int kernel_count) {
     return EXIT_FAILURE;
   }
 
-  fprintf(gnuplot, "set terminal pngcairo size 1280,720\n");
+  fprintf(gnuplot, "set terminal pngcairo size 960,540\n");
   fprintf(gnuplot, "set title 'SGEMM Performance'\n");
   fprintf(gnuplot, "set xlabel 'Matrix size (M = N = K)'\n");
   fprintf(gnuplot, "set ylabel 'GFLOP/s'\n");

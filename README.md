@@ -39,6 +39,10 @@ An attempt to beat openBLAS for the single precision GEMM operation, in single-t
 
 The theoretical single-core peak is `2 FMAs/cycle × 2 operations/FMA × 8 floats/FMA × 2.5 GHz = 80 GFLOP/s`.
 
+The varied benchmark sizes include both tile-friendly dimensions and dimensions
+that expose cache-associativity conflicts, making the resulting performance
+dips visible rather than hiding them behind a regular sweep.
+
 **Kernel 1 — Loop reordering:** Reorder the scalar loops to `i-k-j` so each
 value from A is reused while B and C are traversed contiguously.
 
@@ -49,8 +53,10 @@ retain working data and sustain performance as matrix sizes grow.
 
 ![KBL performance through kernel 2](figures/kbl/sgemm_gflops_0_2.png)
 
-**Kernel 3 — Tiled outer product:** Pack `6x16` tiles and compute them with an
-AVX2 FMA microkernel to perform more arithmetic per byte loaded.
+**Kernel 3 — Direct tiled outer product:** Compute row-major matrices directly
+with a `6x16` AVX2 FMA microkernel, without packing temporary tiles. Avoiding
+packing overhead makes it especially fast for small matrices, where it nearly
+matches—and at several sizes beats—OpenBLAS.
 
 ![KBL performance through kernel 3](figures/kbl/sgemm_gflops_0_3.png)
 
@@ -78,8 +84,8 @@ retain working data and sustain performance as matrix sizes grow.
 
 ![SPR performance through kernel 2](figures/spr/sgemm_gflops_0_2.png)
 
-**Kernel 3 — Tiled outer product:** Pack `6x16` tiles and compute them with an
-AVX2 FMA microkernel to perform more arithmetic per byte loaded.
+**Kernel 3 — Direct tiled outer product:** Compute row-major matrices directly
+with a `6x16` AVX2 FMA microkernel, without packing temporary tiles.
 
 ![SPR performance through kernel 3](figures/spr/sgemm_gflops_0_3.png)
 
@@ -98,9 +104,9 @@ together bring performance close to OpenBLAS.
 ![SPR performance through kernel 5](figures/spr/sgemm_gflops_0_5.png)
 
 At large matrix sizes, the final AVX-512 kernel matches OpenBLAS. At small
-matrix sizes it remains slower because OpenBLAS uses a direct-path GEMM that
-skips packing overhead; implementing a direct path is currently outside the
-scope of this repository.
+matrix sizes it remains slower because it always packs, while OpenBLAS selects
+a direct path. Kernel 3 demonstrates direct GEMM, but the AVX-512 kernel does
+not include a direct path.
 
 ## License
 MIT
