@@ -2,9 +2,9 @@
 #include "variants.h"
 
 /** 2. Cache-blocking across dimensions. */
-#define TK 128
-#define TN 2048
-#define TM 1024
+#define TM 256
+#define TK 16
+#define TN 256
 
 void gemm_cache_blocked(float* __restrict C, 
                           const float* __restrict A, 
