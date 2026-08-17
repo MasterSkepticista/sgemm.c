@@ -7,7 +7,7 @@
 #define MR 6
 #define NR 16
 
-#define MC MR * 4
+#define MC MR * 8
 #define KC 256
 #define NC 2048
 
