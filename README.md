@@ -70,9 +70,16 @@ further improve throughput for both full and partial tiles.
 The final AVX2 kernel reaches 69 GFLOP/s versus OpenBLAS at 72 GFLOP/s—about
 96% of OpenBLAS performance and within 5% of it.
 
-### Intel Xeon Platinum 8488C @ 3.2 GHz (AVX-512)
+### Intel Xeon Platinum 8488C @ 2.4 GHz (AVX-512)
 
-The theoretical single-core peak is `2 FMAs/cycle × 2 operations/FMA × 16 floats/FMA × 3.2 GHz = 204.8 GFLOP/s`.
+> [!INFO] 
+> Intel CPUs have a known frequency regression on pure AVX-512 workloads. These tests were run on an AWS instance without bare-metal access (and hence no clock pinning). Core frequencies were inferred using `perf` cycles and task-clock events.
+> Loaded AVX-512 frequency: 2.4GHz
+> Loaded AVX2 frequency: 2.9GHz
+
+The theoretical AVX-512 single-core peak is `2 FMAs/cycle × 2 operations/FMA × 16 floats/FMA × 2.4 GHz = 153.6 GFLOP/s`.
+
+The theoretical AVX2 single-core peak is `2 FMAs/cycle × 2 operations/FMA × 8 floats/FMA × 2.9 GHz = 92.8 GFLOP/s`.
 
 **Kernel 1 — Loop reordering:** Reorder the scalar loops to `i-k-j` so each
 value from A is reused while B and C are traversed contiguously.
