@@ -72,10 +72,8 @@ The final AVX2 kernel reaches 69 GFLOP/s versus OpenBLAS at 72 GFLOP/s—about
 
 ### Intel Xeon Platinum 8488C @ 2.4 GHz (AVX-512)
 
-> [!INFO] 
+> [!NOTE] 
 > Intel CPUs have a known frequency regression on pure AVX-512 workloads. These tests were run on an AWS instance without bare-metal access (and hence no clock pinning). Core frequencies were inferred using `perf` cycles and task-clock events.
-> Loaded AVX-512 frequency: 2.4GHz
-> Loaded AVX2 frequency: 2.9GHz
 
 The theoretical AVX-512 single-core peak is `2 FMAs/cycle × 2 operations/FMA × 16 floats/FMA × 2.4 GHz = 153.6 GFLOP/s`.
 
